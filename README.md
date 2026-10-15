@@ -10,6 +10,7 @@ A lightweight, Photoshop-style poster editor that runs in the browser. Built for
 - **Blend modes & opacity** — Normal, Multiply, Screen, Overlay, Soft Light, Color, Luminosity and more
 - **Selections** — Lasso, Polygon, Ellipse and Rectangle with feather, Shift to add, Alt to subtract, invert. Copy or cut the selection to a new layer (Ctrl+J / Ctrl+Shift+J), delete pixels, or turn it into a mask. Painting stays inside the selection.
 - **Magic swirl** — draw a path and get glowing, multi-strand colorful ribbons with sparkles; presets (Witchy, Rainbow, Fire, Toxic, Ice, Blood moon), editable strands, twists, spread, thickness, glow, depth and taper
+- **Fog** — wispy ground fog layer with thickness, height, wispiness and color; only covers the bottom, so it can sit between any layers
 - **Masks** — paint black to hide, white to reveal (press `X` to swap); invert, toggle, view as black & white (`\`)
 - **Color tools** (non-destructive, per layer)
   - **Match color** — pulls a cutout's colors toward the backdrop; the fastest way to blend people into a scene

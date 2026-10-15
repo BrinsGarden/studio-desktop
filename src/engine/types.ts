@@ -126,12 +126,17 @@ export interface TextProps {
 }
 
 export interface FillProps {
-  type: 'solid' | 'linear' | 'radial';
+  type: 'solid' | 'linear' | 'radial' | 'fog';
   color1: string;
   alpha1: number;
   color2: string;
   alpha2: number;
   angle: number;
+  /** fog only: how far up the page it reaches (0..1) */
+  fogHeight?: number;
+  /** fog only: how wispy / broken up (0..1) */
+  wisp?: number;
+  seed?: number;
 }
 
 export type LayerKind = 'image' | 'text' | 'fill' | 'adjust' | 'swirl';

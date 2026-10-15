@@ -6,6 +6,7 @@ import { Icon } from './icons';
 import {
   addAdjustLayer,
   addFill,
+  addFog,
   addMask,
   addText,
   deleteLayer,
@@ -162,6 +163,9 @@ export default function LayersPanel() {
         </button>
         <button type="button" className="icon-btn" title="Add gradient / color fill" aria-label="Add gradient" onClick={addFill}>
           <Icon name="gradient" />
+        </button>
+        <button type="button" className="icon-btn" title="Add fog" aria-label="Add fog" onClick={addFog}>
+          <Icon name="fog" />
         </button>
         <button type="button" className="icon-btn" title="Add color adjustment layer (affects everything below)" aria-label="Add adjustment layer" onClick={addAdjustLayer}>
           <Icon name="adjust" />

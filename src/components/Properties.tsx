@@ -80,6 +80,7 @@ export default function Properties() {
 }
 
 function kindLabel(l: Layer) {
+  if (l.kind === 'fill' && l.fill?.type === 'fog') return 'Fog';
   return { image: 'Image', text: 'Text', fill: 'Gradient / Fill', adjust: 'Adjustment', swirl: 'Magic swirl' }[l.kind];
 }
 
@@ -496,8 +497,24 @@ function FillSection({ layer, f }: { layer: Layer; f: FillProps }) {
           { value: 'solid', label: 'Solid' },
           { value: 'linear', label: 'Linear' },
           { value: 'radial', label: 'Vignette' },
+          { value: 'fog', label: 'Fog' },
         ]}
       />
+      {f.type === 'fog' ? (
+        <>
+          <ColorField label="Fog color" value={f.color1} onChange={(v) => set('Fog color', { color1: v })} />
+          <Slider label="Thickness" value={Math.round(f.alpha1 * 100)} min={0} max={100} unit="%" onChange={(v) => set('Fog thickness', { alpha1: v / 100 })} />
+          <Slider label="Height" value={Math.round((f.fogHeight ?? 0.3) * 100)} min={3} max={100} unit="%" onChange={(v) => set('Fog height', { fogHeight: v / 100 })} />
+          <Slider label="Wispiness" value={Math.round((f.wisp ?? 0.7) * 100)} min={0} max={100} unit="%" onChange={(v) => set('Fog wispiness', { wisp: v / 100 })} />
+          <button type="button" className="btn small" onClick={() => set('New fog pattern', { seed: Math.floor(Math.random() * 1e9) })}>
+            New fog pattern
+          </button>
+          <p className="hint">
+            Fog only covers the bottom of the page. It sits in front of every layer below it in the list. Use the Move tool to drag it up or down, and paint its mask to thin it out in spots.
+          </p>
+        </>
+      ) : (
+      <>
       <ColorField
         label={f.type === 'solid' ? 'Color' : f.type === 'radial' ? 'Center color' : 'Start color'}
         value={f.color1}
@@ -536,6 +553,8 @@ function FillSection({ layer, f }: { layer: Layer; f: FillProps }) {
         />
       )}
       <p className="hint">90° fades top to bottom. Add a mask to limit where the gradient shows.</p>
+      </>
+      )}
     </Section>
   );
 }

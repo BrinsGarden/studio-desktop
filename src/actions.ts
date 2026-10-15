@@ -77,6 +77,32 @@ export function addFill() {
   });
 }
 
+export function addFog() {
+  const doc = store.state.doc;
+  if (!doc) return;
+  const layer = makeLayer('fill', 'Fog', {
+    blend: 'screen',
+    fill: {
+      type: 'fog',
+      color1: '#c9bedf',
+      alpha1: 0.75,
+      color2: '#000000',
+      alpha2: 0,
+      angle: 90,
+      fogHeight: 0.3,
+      wisp: 0.7,
+      seed: Math.floor(Math.random() * 1e9),
+    },
+    x: doc.width / 2,
+    y: doc.height / 2,
+  });
+  store.mutate('Add fog', (d) => {
+    insertAboveSelected(d, layer);
+    return layer.id;
+  });
+  store.toast('Fog added above the selected layer — drag it in the Layers list to set what it covers');
+}
+
 export function addAdjustLayer() {
   const doc = store.state.doc;
   if (!doc) return;

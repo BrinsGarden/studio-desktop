@@ -1,6 +1,7 @@
 import { applyAdjustments, computeStats, isIdentity, keyOutColor, processEdges, hexToRgb, type ChannelStats } from './adjust';
 import { createCanvas, type Doc, type Layer, type TextProps, type FillProps } from './types';
 import { renderSwirl } from './swirl';
+import { renderFog } from './fog';
 
 /* ------------------------------------------------------------------ */
 /* Font epoch: bumped when web fonts finish loading so text re-renders */
@@ -105,6 +106,9 @@ function renderText(t: TextProps): HTMLCanvasElement {
 function renderFill(f: FillProps, w: number, h: number): HTMLCanvasElement {
   const c = createCanvas(w, h);
   const ctx = c.getContext('2d')!;
+  if (f.type === 'fog') {
+    return renderFog({ color: f.color1, density: f.alpha1, height: f.fogHeight ?? 0.3, wisp: f.wisp ?? 0.7, seed: f.seed ?? 7 }, w, h);
+  }
   if (f.type === 'solid') {
     ctx.fillStyle = rgba(f.color1, f.alpha1);
     ctx.fillRect(0, 0, w, h);
@@ -212,7 +216,8 @@ export function layerCorners(layer: Layer, doc: Doc): { x: number; y: number }[]
 
 /** True if the layer has a visible pixel at doc point (x, y). */
 export function hitTest(layer: Layer, doc: Doc, x: number, y: number): boolean {
-  if (!layer.visible || layer.kind === 'adjust') return false;
+  // fills, gradients and fog cover the page, so clicks pass through them (pick them in the Layers list)
+  if (!layer.visible || layer.kind === 'adjust' || layer.kind === 'fill') return false;
   const src = getSource(layer, doc);
   if (!src) return false;
   const p = docToLocal(layer, doc, x, y);
