@@ -97,6 +97,8 @@ export interface SwirlProps {
   /** 0..0.5 — fraction of the length that tapers in/out at each end. */
   taper: number;
   seed: number;
+  /** 'helix' = twisting ribbons; 'trail' = soft fanned energy streaks */
+  style?: 'helix' | 'trail';
 }
 
 export const SWIRL_PRESETS: { id: string; label: string; palette: string[] }[] = [

@@ -121,8 +121,59 @@ export function renderSwirl(p: SwirlProps): HTMLCanvasElement {
   const rand = mulberry32(p.seed);
   const sparkleSpots: { x: number; y: number; c: [number, number, number]; front: number }[] = [];
 
+  const trail = p.style === 'trail';
+  const cores = createCanvas(W, H);
+  const cc = cores.getContext('2d')!;
+  cc.lineCap = 'round';
+  cc.lineJoin = 'round';
+  if (trail) {
+    // soft energy streaks: strands fan apart along the path and wiggle gently
+    for (let k = 0; k < strands; k++) {
+      const u = strands === 1 ? 0 : k / (strands - 1) - 0.5;
+      const wobPhase = rand() * Math.PI * 2;
+      const wobFreq = 0.6 + rand() * 1.2;
+      const startT = k === 0 ? 0 : rand() * 0.18;
+      const endT = k === 0 ? 1 : 1 - rand() * 0.18;
+      const widthMul = k === 0 ? 1 : 0.4 + rand() * 0.8;
+      const colorShift = (k / strands) * 0.5;
+      let prev: { x: number; y: number } | null = null;
+      for (let i = 0; i < samples.length; i++) {
+        const sm = samples[i];
+        const t = sm.s / length;
+        if (t < startT || t > endT) {
+          prev = null;
+          continue;
+        }
+        const lt = (t - startT) / Math.max(0.001, endT - startT);
+        const env = smooth(0, taper, lt) * smooth(0, taper, 1 - lt);
+        const fan = p.amplitude * u * 2 * (0.25 + 0.75 * Math.sin(Math.PI * lt));
+        const wob = p.amplitude * 0.35 * Math.sin(Math.PI * 2 * p.wraps * 0.5 * wobFreq * t + wobPhase) * env;
+        const off = fan + wob;
+        const x = ox + sm.x + sm.nx * off;
+        const y = oy + sm.y + sm.ny * off;
+        if (prev && env > 0.01) {
+          const [r, g, b] = paletteAt(pal, t + colorShift);
+          const lw = Math.max(0.5, p.width * widthMul * (0.15 + 0.85 * env));
+          rc.strokeStyle = `rgba(${r | 0},${g | 0},${b | 0},${0.8 * env})`;
+          rc.lineWidth = lw;
+          rc.beginPath();
+          rc.moveTo(prev.x, prev.y);
+          rc.lineTo(x, y);
+          rc.stroke();
+          cc.strokeStyle = `rgba(255,255,255,${0.7 * env * env})`;
+          cc.lineWidth = Math.max(0.5, lw * 0.18);
+          cc.beginPath();
+          cc.moveTo(prev.x, prev.y);
+          cc.lineTo(x, y);
+          cc.stroke();
+          if (env > 0.2 && rand() < 0.03) sparkleSpots.push({ x, y, c: paletteAt(pal, t + colorShift), front: 1 });
+        }
+        prev = { x, y };
+      }
+    }
+  }
   // draw back halves first, then front halves, so fronts overlap backs
-  for (const pass of ['back', 'front'] as const) {
+  for (const pass of trail ? [] : (['back', 'front'] as const)) {
     for (let k = 0; k < strands; k++) {
       const phase = (k / strands) * Math.PI * 2;
       const colorShift = k / strands / 2;
@@ -162,7 +213,20 @@ export function renderSwirl(p: SwirlProps): HTMLCanvasElement {
   }
 
   const oc = out.getContext('2d')!;
-  if (p.glow > 0) {
+  if (trail) {
+    oc.globalCompositeOperation = 'lighter';
+    if (p.glow > 0) {
+      oc.filter = `blur(${p.glow}px)`;
+      oc.drawImage(ribbon, 0, 0);
+      oc.drawImage(ribbon, 0, 0);
+      oc.filter = `blur(${p.glow / 2.5}px)`;
+      oc.drawImage(ribbon, 0, 0);
+    }
+    oc.filter = `blur(${Math.max(0.5, p.width * 0.3)}px)`;
+    oc.drawImage(ribbon, 0, 0);
+    oc.filter = 'none';
+    oc.drawImage(cores, 0, 0);
+  } else if (p.glow > 0) {
     oc.globalCompositeOperation = 'lighter';
     oc.filter = `blur(${p.glow}px)`;
     oc.drawImage(ribbon, 0, 0);
@@ -171,7 +235,7 @@ export function renderSwirl(p: SwirlProps): HTMLCanvasElement {
     oc.filter = 'none';
     oc.globalCompositeOperation = 'source-over';
   }
-  oc.drawImage(ribbon, 0, 0);
+  if (!trail) oc.drawImage(ribbon, 0, 0);
 
   // sparkles: a few along the strands plus some scattered nearby
   const count = Math.max(0, Math.round(p.sparkles));

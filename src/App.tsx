@@ -404,6 +404,15 @@ export default function App() {
         {tool === 'swirl' && (
           <>
             <span className="target-pill">{swirlRedrawId ? 'Redrawing selected swirl' : 'Drag to draw a swirl'}</span>
+            <Segmented
+              label="Swirl style"
+              value={swirl.style}
+              onChange={(v) => store.set({ swirl: { ...swirl, style: v } })}
+              options={[
+                { value: 'trail', label: 'Energy trail' },
+                { value: 'helix', label: 'Twisted ribbon' },
+              ]}
+            />
             <div className="row" role="group" aria-label="Swirl colors">
               {SWIRL_PRESETS.map((p) => (
                 <button

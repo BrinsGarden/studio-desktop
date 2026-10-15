@@ -10,6 +10,7 @@ export interface SwirlDefaults {
   width: number;
   amplitude: number;
   strands: number;
+  style: 'helix' | 'trail';
 }
 
 export interface BrushSettings {
@@ -83,7 +84,7 @@ class Store {
     selection: null,
     selectMode: 'lasso',
     feather: 0,
-    swirl: { preset: 'witchy', width: 14, amplitude: 60, strands: 3 },
+    swirl: { preset: 'witchy', width: 14, amplitude: 40, strands: 4, style: 'trail' },
     swirlRedrawId: null,
     previewHQ: false,
     showMask: false,

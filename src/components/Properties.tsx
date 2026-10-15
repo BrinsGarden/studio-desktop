@@ -315,6 +315,15 @@ function SwirlSection({ layer, s }: { layer: Layer; s: SwirlProps }) {
   };
   return (
     <Section title="Magic swirl">
+      <Segmented
+        label="Swirl style"
+        value={s.style ?? 'helix'}
+        onChange={(v) => set('Swirl style', { style: v })}
+        options={[
+          { value: 'trail', label: 'Energy trail', title: 'Soft glowing streaks that fan out' },
+          { value: 'helix', label: 'Twisted ribbon', title: 'Strands that spiral around each other' },
+        ]}
+      />
       <div className="row">
         {SWIRL_PRESETS.map((p) => (
           <button
@@ -351,12 +360,14 @@ function SwirlSection({ layer, s }: { layer: Layer; s: SwirlProps }) {
         )}
       </div>
       <Slider label="Strands" value={s.strands} min={1} max={6} onChange={(v) => set('Strands', { strands: v })} />
-      <Slider label="Twists" value={s.wraps} min={0} max={40} step={0.5} onChange={(v) => set('Twists', { wraps: v })} />
+      <Slider label={s.style === 'trail' ? 'Wiggle' : 'Twists'} value={s.wraps} min={0} max={40} step={0.5} onChange={(v) => set('Twists', { wraps: v })} />
       <Slider label="Spread" value={s.amplitude} min={0} max={400} unit="px" onChange={(v) => set('Spread', { amplitude: v })} />
       <Slider label="Thickness" value={s.width} min={1} max={80} unit="px" onChange={(v) => set('Thickness', { width: v })} />
       <Slider label="Glow" value={s.glow} min={0} max={120} unit="px" onChange={(v) => set('Glow', { glow: v })} />
       <Slider label="Sparkles" value={s.sparkles} min={0} max={200} onChange={(v) => set('Sparkles', { sparkles: v })} />
-      <Slider label="Depth" value={Math.round(s.depth * 100)} min={0} max={100} unit="%" onChange={(v) => set('Depth', { depth: v / 100 })} />
+      {s.style !== 'trail' && (
+        <Slider label="Depth" value={Math.round(s.depth * 100)} min={0} max={100} unit="%" onChange={(v) => set('Depth', { depth: v / 100 })} />
+      )}
       <Slider label="Taper ends" value={Math.round(s.taper * 100)} min={0} max={50} unit="%" onChange={(v) => set('Taper', { taper: v / 100 })} />
       <div className="row">
         <button type="button" className="btn small" onClick={() => set('Shuffle sparkles', { seed: Math.floor(Math.random() * 1e9) })}>
