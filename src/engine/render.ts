@@ -1,5 +1,6 @@
 import { applyAdjustments, computeStats, isIdentity, keyOutColor, processEdges, hexToRgb, type ChannelStats } from './adjust';
 import { createCanvas, type Doc, type Layer, type TextProps, type FillProps } from './types';
+import { renderSwirl } from './swirl';
 
 /* ------------------------------------------------------------------ */
 /* Font epoch: bumped when web fonts finish loading so text re-renders */
@@ -51,6 +52,7 @@ export function rgba(hex: string, a: number): string {
 
 /* ---------------- sources ---------------- */
 const textCache = new Map<string, { key: string; canvas: HTMLCanvasElement }>();
+const swirlCache = new Map<string, { key: string; canvas: HTMLCanvasElement }>();
 const fillCache = new Map<string, { key: string; canvas: HTMLCanvasElement }>();
 
 export function fontString(t: TextProps): string {
@@ -134,6 +136,14 @@ export function getSource(layer: Layer, doc: Doc): HTMLCanvasElement | null {
     if (hit && hit.key === key) return hit.canvas;
     const canvas = renderText(layer.text);
     textCache.set(layer.id, { key, canvas });
+    return canvas;
+  }
+  if (layer.kind === 'swirl' && layer.swirl) {
+    const key = JSON.stringify(layer.swirl);
+    const hit = swirlCache.get(layer.id);
+    if (hit && hit.key === key) return hit.canvas;
+    const canvas = renderSwirl(layer.swirl);
+    swirlCache.set(layer.id, { key, canvas });
     return canvas;
   }
   if (layer.kind === 'fill' && layer.fill) {
@@ -262,7 +272,7 @@ function adjustedSource(layer: Layer, doc: Doc, f: number): HTMLCanvasElement | 
     JSON.stringify(layer.fx.key ?? null),
     layer.fx.softenEdge,
     tStats ? tStats.mean.join(',') + tStats.std.join(',') : '',
-    src === layer.canvas ? '' : JSON.stringify(layer.text ?? layer.fill) + fontEpoch,
+    src === layer.canvas ? '' : JSON.stringify(layer.text ?? layer.fill ?? layer.swirl) + fontEpoch,
   ].join('|');
   const hit = adjustedCache.get(layer.id);
   if (hit && hit.key === key) return hit.canvas;
@@ -287,6 +297,7 @@ export function dropCaches(layerId: string) {
   adjustedCache.delete(layerId);
   statsCache.delete(layerId);
   textCache.delete(layerId);
+  swirlCache.delete(layerId);
   fillCache.delete(layerId);
 }
 
@@ -369,7 +380,7 @@ function downsample(c: HTMLCanvasElement): Uint8ClampedArray {
 function drawPixelLayer(doc: Doc, layer: Layer, ctx: CanvasRenderingContext2D, W: number, H: number, k: number) {
   const src = getSource(layer, doc);
   if (!src) return;
-  if (layer.kind === 'text') syncMaskSize(layer, doc);
+  if (layer.kind === 'text' || layer.kind === 'swirl') syncMaskSize(layer, doc);
   const w = src.width;
   const h = src.height;
   const f = Math.min(1, Math.max(0.02, k * layer.scale));
@@ -392,6 +403,14 @@ function drawPixelLayer(doc: Doc, layer: Layer, ctx: CanvasRenderingContext2D, W
     L.globalCompositeOperation = 'source-over';
   }
   L.setTransform(1, 0, 0, 1, 0, 0);
+
+  // 2b. color overlay
+  if (fx.overlay?.enabled && fx.overlay.opacity > 0) {
+    L.globalCompositeOperation = 'source-atop';
+    L.fillStyle = rgba(fx.overlay.color, fx.overlay.opacity);
+    L.fillRect(0, 0, W, H);
+    L.globalCompositeOperation = 'source-over';
+  }
 
   // 3. rim light (painted onto the layer itself)
   if (fx.rim.enabled && fx.rim.opacity > 0) {
@@ -421,7 +440,8 @@ function drawPixelLayer(doc: Doc, layer: Layer, ctx: CanvasRenderingContext2D, W
   let final: HTMLCanvasElement = L.canvas;
 
   // 4. drop shadow / outer glow underneath
-  if ((fx.shadow.enabled && fx.shadow.opacity > 0) || (fx.glow.enabled && fx.glow.opacity > 0)) {
+  const outlineOn = !!fx.outline?.enabled && fx.outline.opacity > 0 && fx.outline.size > 0;
+  if ((fx.shadow.enabled && fx.shadow.opacity > 0) || (fx.glow.enabled && fx.glow.opacity > 0) || outlineOn) {
     const F = temp('fx', W, H);
     const OFF = W + 1000;
     if (fx.shadow.enabled && fx.shadow.opacity > 0) {
@@ -444,6 +464,25 @@ function drawPixelLayer(doc: Doc, layer: Layer, ctx: CanvasRenderingContext2D, W
     F.shadowBlur = 0;
     F.shadowOffsetX = 0;
     F.shadowOffsetY = 0;
+    if (outlineOn) {
+      // tinted silhouette stamped in a ring around the layer
+      const T = temp('outline', W, H);
+      T.drawImage(L.canvas, 0, 0);
+      T.globalCompositeOperation = 'source-in';
+      T.fillStyle = fx.outline.color;
+      T.fillRect(0, 0, W, H);
+      const O = temp('outline2', W, H);
+      const r = fx.outline.size * k;
+      const steps = Math.min(32, Math.max(12, Math.round(r * 2)));
+      for (let i = 0; i < steps; i++) {
+        const a = (i / steps) * Math.PI * 2;
+        O.drawImage(T.canvas, Math.cos(a) * r, Math.sin(a) * r);
+      }
+      O.drawImage(T.canvas, 0, 0);
+      F.globalAlpha = fx.outline.opacity;
+      F.drawImage(O.canvas, 0, 0);
+      F.globalAlpha = 1;
+    }
     F.drawImage(L.canvas, 0, 0);
     final = F.canvas;
   }

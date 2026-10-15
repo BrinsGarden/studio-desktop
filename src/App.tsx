@@ -10,6 +10,12 @@ import {
   addImages,
   addMask,
   deleteLayer,
+  deleteSelectedPixels,
+  deselect,
+  invertSel,
+  maskFromSelection,
+  selectAll,
+  selectionToLayer,
   duplicateLayer,
   exportAs,
   openImagesDialog,
@@ -17,11 +23,14 @@ import {
   saveProject,
 } from './actions';
 import { fontString } from './engine/render';
+import { SWIRL_PRESETS } from './engine/types';
 
 const TOOLS: { id: Tool; label: string; key: string; icon: string }[] = [
   { id: 'move', label: 'Move & resize', key: 'V', icon: 'move' },
+  { id: 'select', label: 'Select / cut out', key: 'L', icon: 'select' },
   { id: 'brush', label: 'Brush', key: 'B', icon: 'brush' },
   { id: 'eraser', label: 'Eraser', key: 'E', icon: 'eraser' },
+  { id: 'swirl', label: 'Magic swirl', key: 'S', icon: 'swirl' },
   { id: 'eyedropper', label: 'Eyedropper', key: 'I', icon: 'eyedropper' },
   { id: 'hand', label: 'Hand (or hold Space)', key: 'H', icon: 'hand' },
 ];
@@ -87,6 +96,11 @@ export default function App() {
   const toast = useStore((s) => s.toast);
   const dirty = useStore((s) => s.dirty);
   const selectedId = useStore((s) => s.selectedId);
+  const selection = useStore((s) => s.selection);
+  const selectMode = useStore((s) => s.selectMode);
+  const feather = useStore((s) => s.feather);
+  const swirl = useStore((s) => s.swirl);
+  const swirlRedrawId = useStore((s) => s.swirlRedrawId);
   const [showNew, setShowNew] = useState(false);
   const [zoom, setZoom] = useState(1);
 
@@ -150,7 +164,17 @@ export default function App() {
         openImagesDialog();
       } else if (ctrl && k === 'j') {
         e.preventDefault();
-        duplicateLayer();
+        if (st.selection) selectionToLayer(e.shiftKey);
+        else duplicateLayer();
+      } else if (ctrl && k === 'd') {
+        e.preventDefault();
+        deselect();
+      } else if (ctrl && k === 'a') {
+        e.preventDefault();
+        selectAll();
+      } else if (ctrl && k === 'i' && e.shiftKey) {
+        e.preventDefault();
+        invertSel();
       } else if (ctrl && k === 'e' && e.shiftKey) {
         e.preventDefault();
         exportAs('png');
@@ -168,7 +192,11 @@ export default function App() {
         window.dispatchEvent(new CustomEvent('sd:zoomby', { detail: 0.8 }));
       } else if (ctrl) {
         return;
+      } else if (e.altKey) {
+        return;
       } else if (k === 'v') store.set({ tool: 'move' });
+      else if (k === 'l' || k === 'm') store.set({ tool: 'select' });
+      else if (k === 's') store.set({ tool: 'swirl' });
       else if (k === 'b') store.set({ tool: 'brush' });
       else if (k === 'e') store.set({ tool: 'eraser' });
       else if (k === 'i') store.set({ tool: 'eyedropper' });
@@ -178,7 +206,10 @@ export default function App() {
       else if (k === '[') store.set({ brush: { ...st.brush, size: Math.max(1, Math.round(st.brush.size * 0.85)) } });
       else if (k === ']') store.set({ brush: { ...st.brush, size: Math.min(2000, Math.round(st.brush.size * 1.18) + 1) } });
       else if (k === 'delete' || k === 'backspace') {
-        if (st.selectedId) {
+        if (st.selection) {
+          e.preventDefault();
+          deleteSelectedPixels();
+        } else if (st.selectedId) {
           e.preventDefault();
           deleteLayer();
         }
@@ -228,6 +259,21 @@ export default function App() {
             { label: 'Duplicate layer', hint: 'Ctrl+J', run: () => duplicateLayer(), disabled: !selectedId },
             { label: 'Add mask', run: addMask, disabled: !selectedId },
             { label: 'Delete layer', hint: 'Del', run: () => deleteLayer(), disabled: !selectedId },
+          ]}
+        />
+        <Menu
+          label="Select"
+          items={[
+            { label: 'Select all', hint: 'Ctrl+A', run: selectAll, disabled: !doc },
+            { label: 'Deselect', hint: 'Ctrl+D', run: deselect, disabled: !selection },
+            { label: 'Invert selection', hint: 'Ctrl+Shift+I', run: invertSel, disabled: !doc },
+            '-',
+            { label: 'Copy to new layer', hint: 'Ctrl+J', run: () => selectionToLayer(false), disabled: !selection },
+            { label: 'Cut to new layer', hint: 'Ctrl+Shift+J', run: () => selectionToLayer(true), disabled: !selection },
+            { label: 'Delete selected pixels', hint: 'Del', run: deleteSelectedPixels, disabled: !selection },
+            '-',
+            { label: 'Mask: show only selection', run: () => maskFromSelection('reveal'), disabled: !selection },
+            { label: 'Mask: hide selection', run: () => maskFromSelection('hide'), disabled: !selection },
           ]}
         />
         <Menu
@@ -307,6 +353,80 @@ export default function App() {
               </label>
             )}
             <span className="muted">[ ] size</span>
+          </>
+        )}
+        {tool === 'select' && (
+          <>
+            <Segmented
+              label="Selection shape"
+              value={selectMode}
+              onChange={(v) => store.set({ selectMode: v })}
+              options={[
+                { value: 'lasso', label: 'Lasso', title: 'Drag around the area' },
+                { value: 'polygon', label: 'Polygon', title: 'Click points; click the first point, double-click or Enter to finish' },
+                { value: 'ellipse', label: 'Ellipse', title: 'Drag an oval — good for heads' },
+                { value: 'rect', label: 'Rectangle' },
+              ]}
+            />
+            <div className="opt-slider">
+              <Slider label="Feather" value={feather} min={0} max={100} unit="px" defaultValue={0} onChange={(v) => store.set({ feather: v })} />
+            </div>
+            {selection ? (
+              <div className="opt-btns">
+                <button type="button" className="btn small primary" onClick={() => selectionToLayer(false)} title="Ctrl+J">
+                  Copy to new layer
+                </button>
+                <button type="button" className="btn small" onClick={() => selectionToLayer(true)} title="Ctrl+Shift+J">
+                  Cut to new layer
+                </button>
+                <button type="button" className="btn small" onClick={() => maskFromSelection('reveal')}>
+                  Mask: keep only this
+                </button>
+                <button type="button" className="btn small" onClick={() => maskFromSelection('hide')}>
+                  Mask: hide this
+                </button>
+                <button type="button" className="btn small ghost" onClick={invertSel} title="Ctrl+Shift+I">
+                  Invert
+                </button>
+                <button type="button" className="btn small ghost" onClick={deselect} title="Ctrl+D">
+                  Deselect
+                </button>
+              </div>
+            ) : (
+              <span className="muted">
+                {selectMode === 'polygon'
+                  ? 'Click points around the area · click the first point or press Enter to close · Esc cancels'
+                  : 'Drag around what you want · Shift adds · Alt subtracts'}
+              </span>
+            )}
+          </>
+        )}
+        {tool === 'swirl' && (
+          <>
+            <span className="target-pill">{swirlRedrawId ? 'Redrawing selected swirl' : 'Drag to draw a swirl'}</span>
+            <div className="row" role="group" aria-label="Swirl colors">
+              {SWIRL_PRESETS.map((p) => (
+                <button
+                  type="button"
+                  key={p.id}
+                  className={`preset-chip ${swirl.preset === p.id ? 'on' : ''}`}
+                  title={p.label}
+                  aria-label={`${p.label} colors`}
+                  aria-pressed={swirl.preset === p.id}
+                  style={{ background: `linear-gradient(90deg, ${p.palette.join(',')})` }}
+                  onClick={() => store.set({ swirl: { ...swirl, preset: p.id } })}
+                />
+              ))}
+            </div>
+            <div className="opt-slider">
+              <Slider label="Thickness" value={swirl.width} min={1} max={80} unit="px" onChange={(v) => store.set({ swirl: { ...swirl, width: v } })} />
+            </div>
+            <div className="opt-slider">
+              <Slider label="Spread" value={swirl.amplitude} min={0} max={400} unit="px" onChange={(v) => store.set({ swirl: { ...swirl, amplitude: v } })} />
+            </div>
+            <div className="opt-slider">
+              <Slider label="Strands" value={swirl.strands} min={1} max={6} onChange={(v) => store.set({ swirl: { ...swirl, strands: v } })} />
+            </div>
           </>
         )}
         {tool === 'eyedropper' && <span className="muted">Click the image to pick a color for the brush (also copied to clipboard).</span>}

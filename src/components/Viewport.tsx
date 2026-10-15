@@ -3,7 +3,9 @@ import { store, useStore } from '../store';
 import { createCanvas, type Doc, type Layer } from '../engine/types';
 import { docToLocal, hitTest, layerCorners, renderDoc, onFontsChanged } from '../engine/render';
 import { Stroke, type StrokeMode } from '../engine/brush';
-import { addImages } from '../actions';
+import { addImages, createSwirl } from '../actions';
+import { addShape, drawAnts, ellipsePts, polyArea, rectPts, selectionMaskForLayer, simplify, type Pt } from '../engine/selection';
+import { SWIRL_PRESETS } from '../engine/types';
 
 interface View {
   zoom: number;
@@ -16,7 +18,17 @@ type Gesture =
   | { kind: 'move'; key: string; dx: number; dy: number; id: string }
   | { kind: 'scale'; key: string; id: string; cx: number; cy: number; d0: number; s0: number }
   | { kind: 'rotate'; key: string; id: string; cx: number; cy: number; a0: number; r0: number }
-  | { kind: 'stroke'; stroke: Stroke; layerId: string; target: 'canvas' | 'mask' };
+  | { kind: 'stroke'; stroke: Stroke; layerId: string; target: 'canvas' | 'mask' }
+  | { kind: 'select'; mode: 'lasso' | 'rect' | 'ellipse'; op: SelOp; start: Pt; pts: Pt[]; end: Pt }
+  | { kind: 'swirl'; pts: Pt[] };
+
+type SelOp = 'new' | 'add' | 'sub';
+
+function shapeFor(g: { mode: 'lasso' | 'rect' | 'ellipse'; start: Pt; pts: Pt[]; end: Pt }): Pt[] {
+  if (g.mode === 'rect') return rectPts(g.start, g.end);
+  if (g.mode === 'ellipse') return ellipsePts(g.start, g.end);
+  return g.pts;
+}
 
 const HANDLE = 7;
 
@@ -36,6 +48,8 @@ export default function Viewport() {
   const rafBlit = useRef(0);
   const docKey = useRef('');
   const checker = useRef<CanvasPattern | null>(null);
+  /** In-progress polygon selection (click to add points). */
+  const polyDraft = useRef<{ pts: Pt[]; op: SelOp } | null>(null);
 
   const doc = useStore((s) => s.doc);
   const rev = useStore((s) => s.rev);
@@ -44,6 +58,8 @@ export default function Viewport() {
   const showMask = useStore((s) => s.showMask);
   const selectedId = useStore((s) => s.selectedId);
   const brushSize = useStore((s) => s.brush.size);
+  const selection = useStore((s) => s.selection);
+  const selectMode = useStore((s) => s.selectMode);
 
   /* ---------- drawing ---------- */
   const blit = useCallback(() => {
@@ -118,6 +134,40 @@ export default function Viewport() {
         ctx.beginPath();
         ctx.arc(pointer.current.x, pointer.current.y, r, 0, Math.PI * 2);
         ctx.stroke();
+      }
+
+      // selection outlines (marching ants)
+      const toScreen = (p: Pt) => ({ x: panX + p.x * zoom, y: panY + p.y * zoom });
+      const ants = (performance.now() / 60) % 8;
+      if (st.selection) drawAnts(ctx, st.selection.shapes.map((s) => s.pts.map(toScreen)), true, ants);
+      const g = gesture.current;
+      if (g?.kind === 'select') drawAnts(ctx, [shapeFor(g).map(toScreen)], g.mode !== 'lasso', ants);
+      const draft = polyDraft.current;
+      if (draft) {
+        const pts = draft.pts.map(toScreen);
+        if (pointer.current.inside) pts.push({ x: pointer.current.x, y: pointer.current.y });
+        drawAnts(ctx, [pts], false, ants);
+        ctx.fillStyle = '#fff';
+        ctx.strokeStyle = '#000';
+        const f = pts[0];
+        ctx.beginPath();
+        ctx.arc(f.x, f.y, 5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+      }
+      if (g?.kind === 'swirl' && g.pts.length > 1) {
+        const pal = SWIRL_PRESETS.find((p) => p.id === st.swirl.preset)?.palette ?? ['#b04cff'];
+        ctx.save();
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.shadowColor = pal[0];
+        ctx.shadowBlur = 12;
+        ctx.strokeStyle = pal[0];
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        g.pts.map(toScreen).forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+        ctx.stroke();
+        ctx.restore();
       }
     });
   }, []);
@@ -208,7 +258,39 @@ export default function Viewport() {
 
   useEffect(() => {
     blit();
-  }, [tool, brushSize, blit]);
+  }, [tool, brushSize, selection, blit]);
+
+  // animate marching ants while something is selected
+  useEffect(() => {
+    if (!selection && tool !== 'select') return;
+    const id = window.setInterval(() => {
+      if (store.state.selection || polyDraft.current || gesture.current) blit();
+    }, 140);
+    return () => window.clearInterval(id);
+  }, [selection, tool, blit]);
+
+  // leaving the select tool drops an unfinished polygon
+  useEffect(() => {
+    if (tool !== 'select' || selectMode !== 'polygon') polyDraft.current = null;
+  }, [tool, selectMode]);
+
+  // Enter closes a polygon, Escape cancels it (or drops the selection)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (isTyping(e)) return;
+      if (e.key === 'Escape') {
+        if (polyDraft.current) polyDraft.current = null;
+        else if (store.state.selection) store.set({ selection: null });
+        if (store.state.swirlRedrawId) store.set({ swirlRedrawId: null });
+        blit();
+      } else if (e.key === 'Enter' && polyDraft.current) {
+        commitPolygon();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [blit]);
 
   useEffect(() => onFontsChanged(() => recomposite()), [recomposite]);
 
@@ -309,6 +391,30 @@ export default function Viewport() {
       return;
     }
 
+    if (st.tool === 'select') {
+      const op: SelOp = e.shiftKey ? 'add' : e.altKey ? 'sub' : 'new';
+      if (st.selectMode === 'polygon') {
+        const draft = polyDraft.current;
+        if (!draft) {
+          polyDraft.current = { pts: [dp], op };
+        } else {
+          const first = draft.pts[0];
+          const close = Math.hypot((first.x - dp.x) * v.zoom, (first.y - dp.y) * v.zoom) < 10;
+          if (close && draft.pts.length >= 3) commitPolygon();
+          else draft.pts.push(dp);
+        }
+        blit();
+        return;
+      }
+      gesture.current = { kind: 'select', mode: st.selectMode, op, start: dp, pts: [dp], end: dp };
+      return;
+    }
+
+    if (st.tool === 'swirl') {
+      gesture.current = { kind: 'swirl', pts: [dp] };
+      return;
+    }
+
     if (st.tool === 'brush' || st.tool === 'eraser') {
       const sel = d.layers.find((l) => l.id === st.selectedId);
       if (!sel) {
@@ -329,7 +435,8 @@ export default function Viewport() {
       } else {
         mode = st.tool === 'brush' ? 'paint' : 'erase';
       }
-      const stroke = new Stroke(res.canvas, mode, st.brush.color, diameter, st.brush.hardness, st.brush.opacity);
+      const clip = st.selection ? selectionMaskForLayer(st.selection, sel, d, st.feather) : null;
+      const stroke = new Stroke(res.canvas, mode, st.brush.color, diameter, st.brush.hardness, st.brush.opacity, clip);
       stroke.to(lp.x, lp.y);
       gesture.current = { kind: 'stroke', stroke, layerId: sel.id, target: res.target };
       if (res.target === 'canvas') sel.version++;
@@ -344,7 +451,7 @@ export default function Viewport() {
     const st = store.state;
     const d = st.doc;
     if (!g || !d) {
-      if (st.tool === 'brush' || st.tool === 'eraser') blit();
+      if (st.tool === 'brush' || st.tool === 'eraser' || polyDraft.current) blit();
       return;
     }
     const dp = toDoc(p.x, p.y);
@@ -387,6 +494,19 @@ export default function Viewport() {
         }, 'Rotate', g.key);
         break;
       }
+      case 'select': {
+        g.end = dp;
+        const last = g.pts[g.pts.length - 1];
+        if (Math.hypot(dp.x - last.x, dp.y - last.y) * view.current.zoom >= 2) g.pts.push(dp);
+        blit();
+        break;
+      }
+      case 'swirl': {
+        const last = g.pts[g.pts.length - 1];
+        if (Math.hypot(dp.x - last.x, dp.y - last.y) * view.current.zoom >= 3) g.pts.push(dp);
+        blit();
+        break;
+      }
       case 'stroke': {
         const sel = d.layers.find((l) => l.id === g.layerId);
         if (!sel) break;
@@ -404,9 +524,42 @@ export default function Viewport() {
     }
   };
 
+  const commitSelection = (pts: Pt[], op: SelOp) => {
+    const st = store.state;
+    const minArea = 9 / (view.current.zoom * view.current.zoom);
+    if (pts.length < 3 || polyArea(pts) < minArea) {
+      if (op === 'new') store.set({ selection: null });
+      blit();
+      return;
+    }
+    const shape = { op: (op === 'sub' ? 'sub' : 'add') as 'add' | 'sub', pts: simplify(pts, 0.75 / view.current.zoom) };
+    store.set({ selection: addShape(st.selection, shape, op === 'new') });
+  };
+
+  function commitPolygon() {
+    const draft = polyDraft.current;
+    polyDraft.current = null;
+    if (draft) commitSelection(draft.pts, draft.op);
+    blit();
+  }
+
   const onPointerUp = () => {
     const g = gesture.current;
     gesture.current = null;
+    if (g?.kind === 'select') {
+      commitSelection(shapeFor(g), g.op);
+      return;
+    }
+    if (g?.kind === 'swirl') {
+      const len = g.pts.reduce((a, p, i) => (i ? a + Math.hypot(p.x - g.pts[i - 1].x, p.y - g.pts[i - 1].y) : 0), 0);
+      if (len * view.current.zoom < 15) {
+        store.toast('Drag along a path to draw a swirl');
+      } else {
+        createSwirl(simplify(g.pts, 4 / view.current.zoom));
+      }
+      blit();
+      return;
+    }
     if (g?.kind === 'stroke') {
       const patch = g.stroke.finish();
       if (patch) store.pushPixels(g.layerId, g.target, patch, g.target === 'mask' ? 'Paint mask' : 'Paint');
@@ -446,7 +599,7 @@ export default function Viewport() {
   };
 
   const cursor =
-    tool === 'hand' ? 'grab' : tool === 'move' ? 'move' : tool === 'eyedropper' ? 'crosshair' : 'none';
+    tool === 'hand' ? 'grab' : tool === 'move' ? 'move' : tool === 'eyedropper' || tool === 'select' || tool === 'swirl' ? 'crosshair' : 'none';
 
   return (
     <div
@@ -467,6 +620,7 @@ export default function Viewport() {
           blit();
         }}
         onWheel={onWheel}
+        onDoubleClick={() => polyDraft.current && commitPolygon()}
         aria-label="Canvas"
       />
       {!doc && (

@@ -1,8 +1,16 @@
 import { useSyncExternalStore } from 'react';
 import type { Doc, Layer } from './engine/types';
 import { applyPatch, type PixelPatch } from './engine/brush';
+import type { SelectMode, Selection } from './engine/selection';
 
-export type Tool = 'move' | 'brush' | 'eraser' | 'eyedropper' | 'hand';
+export type Tool = 'move' | 'select' | 'brush' | 'eraser' | 'swirl' | 'eyedropper' | 'hand';
+
+export interface SwirlDefaults {
+  preset: string;
+  width: number;
+  amplitude: number;
+  strands: number;
+}
 
 export interface BrushSettings {
   size: number;
@@ -21,6 +29,13 @@ export interface AppState {
   /** Brush on a mask hides (black) or reveals (white). Eraser always does the opposite. */
   maskPaint: 'hide' | 'reveal';
   autoSelect: boolean;
+  /** Active selection in document coordinates. */
+  selection: Selection | null;
+  selectMode: SelectMode;
+  feather: number;
+  swirl: SwirlDefaults;
+  /** When set, the next swirl drawn replaces this swirl layer's path. */
+  swirlRedrawId: string | null;
   previewHQ: boolean;
   showMask: boolean;
   rev: number;
@@ -46,6 +61,7 @@ function cloneLayer(l: Layer): Layer {
     fx: JSON.parse(JSON.stringify(l.fx)),
     text: l.text ? { ...l.text } : undefined,
     fill: l.fill ? { ...l.fill } : undefined,
+    swirl: l.swirl ? JSON.parse(JSON.stringify(l.swirl)) : undefined,
   };
 }
 
@@ -64,6 +80,11 @@ class Store {
     brush: { size: 60, hardness: 50, opacity: 100, color: '#ffffff' },
     maskPaint: 'hide',
     autoSelect: true,
+    selection: null,
+    selectMode: 'lasso',
+    feather: 0,
+    swirl: { preset: 'witchy', width: 14, amplitude: 60, strands: 3 },
+    swirlRedrawId: null,
     previewHQ: false,
     showMask: false,
     rev: 0,
@@ -120,7 +141,7 @@ class Store {
   load(doc: Doc, selectedId: string | null = null) {
     this.undoStack = [];
     this.redoStack = [];
-    this.syncFlags({ doc, selectedId: selectedId ?? doc.layers[doc.layers.length - 1]?.id ?? null, dirty: false, editMask: false });
+    this.syncFlags({ doc, selectedId: selectedId ?? doc.layers[doc.layers.length - 1]?.id ?? null, dirty: false, editMask: false, selection: null });
   }
 
   /**

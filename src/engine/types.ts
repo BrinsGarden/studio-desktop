@@ -78,7 +78,35 @@ export interface Effects {
   shadow: { enabled: boolean; color: string; opacity: number; angle: number; distance: number; size: number };
   glow: { enabled: boolean; color: string; opacity: number; size: number; strength: number };
   rim: { enabled: boolean; color: string; opacity: number; angle: number; width: number; softness: number };
+  outline: { enabled: boolean; color: string; size: number; opacity: number };
+  overlay: { enabled: boolean; color: string; opacity: number };
 }
+
+/** A glowing ribbon swirl drawn along a path. Points are relative to the path's center. */
+export interface SwirlProps {
+  points: [number, number][];
+  palette: string[];
+  width: number;
+  strands: number;
+  wraps: number;
+  amplitude: number;
+  glow: number;
+  sparkles: number;
+  /** 0..1 — how much the "behind" half of each loop fades, for a 3D wrap look. */
+  depth: number;
+  /** 0..0.5 — fraction of the length that tapers in/out at each end. */
+  taper: number;
+  seed: number;
+}
+
+export const SWIRL_PRESETS: { id: string; label: string; palette: string[] }[] = [
+  { id: 'witchy', label: 'Witchy', palette: ['#b04cff', '#ff3df2', '#39ff88'] },
+  { id: 'rainbow', label: 'Rainbow', palette: ['#ff3b3b', '#ffb13b', '#fff23b', '#3bff6e', '#3bc4ff', '#a83bff'] },
+  { id: 'fire', label: 'Fire', palette: ['#ff2a00', '#ff8c1a', '#ffe066'] },
+  { id: 'toxic', label: 'Toxic', palette: ['#39ff14', '#d6ff3b', '#2affc8'] },
+  { id: 'ice', label: 'Ice', palette: ['#7af0ff', '#3b8cff', '#e0f7ff'] },
+  { id: 'blood', label: 'Blood moon', palette: ['#8b0000', '#ff2a2a', '#ff9a3c'] },
+];
 
 export interface TextProps {
   text: string;
@@ -106,7 +134,7 @@ export interface FillProps {
   angle: number;
 }
 
-export type LayerKind = 'image' | 'text' | 'fill' | 'adjust';
+export type LayerKind = 'image' | 'text' | 'fill' | 'adjust' | 'swirl';
 
 export interface Layer {
   id: string;
@@ -131,6 +159,7 @@ export interface Layer {
   fx: Effects;
   text?: TextProps;
   fill?: FillProps;
+  swirl?: SwirlProps;
   /** Bumped whenever the pixels in `canvas` change. */
   version: number;
 }
@@ -178,6 +207,8 @@ export function defaultEffects(): Effects {
     shadow: { enabled: false, color: '#000000', opacity: 0.6, angle: 120, distance: 12, size: 24 },
     glow: { enabled: false, color: '#b04cff', opacity: 0.8, size: 30, strength: 2 },
     rim: { enabled: false, color: '#ff9a3c', opacity: 0.8, angle: 45, width: 6, softness: 6 },
+    outline: { enabled: false, color: '#39ff88', size: 6, opacity: 1 },
+    overlay: { enabled: false, color: '#7a4cff', opacity: 0.5 },
   };
 }
 

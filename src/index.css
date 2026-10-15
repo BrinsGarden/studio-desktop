@@ -829,3 +829,35 @@ kbd {
   border-radius: 50%;
   border: 1px solid var(--line);
 }
+.preset-chip {
+  width: 38px;
+  height: 22px;
+  border-radius: 11px;
+  border: 1px solid var(--line);
+  cursor: pointer;
+}
+.mini-color {
+  width: 30px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: none;
+  cursor: pointer;
+}
+.opt-btns {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.preset-chip.on {
+  outline: 2px solid #fff;
+  outline-offset: 1px;
+}
+.optionsbar .row {
+  margin: 0;
+  flex-wrap: nowrap;
+}
+.optionsbar .segmented {
+  flex-shrink: 0;
+}

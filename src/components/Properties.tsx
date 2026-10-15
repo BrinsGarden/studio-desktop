@@ -11,6 +11,8 @@ import {
   type Layer,
   type TextProps,
   type FillProps,
+  type SwirlProps,
+  SWIRL_PRESETS,
 } from '../engine/types';
 import { ColorField, Section, Segmented, Select, Slider } from './ui';
 import { CurvesEditor } from './CurvesEditor';
@@ -28,7 +30,7 @@ export default function Properties() {
   const kind = layer?.kind;
   // text & gradient settings live on the Layer tab — jump there when one is selected
   useEffect(() => {
-    if (kind === 'text' || kind === 'fill') setTab('layer');
+    if (kind === 'text' || kind === 'fill' || kind === 'swirl') setTab('layer');
     if (kind === 'adjust') setTab('color');
   }, [selectedId, kind]);
 
@@ -78,7 +80,7 @@ export default function Properties() {
 }
 
 function kindLabel(l: Layer) {
-  return { image: 'Image', text: 'Text', fill: 'Gradient / Fill', adjust: 'Adjustment' }[l.kind];
+  return { image: 'Image', text: 'Text', fill: 'Gradient / Fill', adjust: 'Adjustment', swirl: 'Magic swirl' }[l.kind];
 }
 
 function up(layer: Layer, label: string, fn: (l: Layer) => void) {
@@ -93,6 +95,7 @@ function LayerTab({ layer }: { layer: Layer }) {
     <>
       {layer.kind === 'text' && layer.text && <TextSection layer={layer} t={layer.text} />}
       {layer.kind === 'fill' && layer.fill && <FillSection layer={layer} f={layer.fill} />}
+      {layer.kind === 'swirl' && layer.swirl && <SwirlSection layer={layer} s={layer.swirl} />}
 
       <Section title="Blending">
         <Select
@@ -166,7 +169,7 @@ function LayerTab({ layer }: { layer: Layer }) {
               Fill
             </button>
           </div>
-          {(layer.kind === 'text' || layer.kind === 'fill') && (
+          {(layer.kind === 'text' || layer.kind === 'fill' || layer.kind === 'swirl') && (
             <button type="button" className="btn small ghost" onClick={() => rasterize(layer.id)}>
               Rasterize (turn into paintable pixels)
             </button>
@@ -295,6 +298,83 @@ function KeySection({ layer }: { layer: Layer }) {
       </div>
       <Slider label="Tolerance" value={key.tolerance} min={0} max={60} unit="%" defaultValue={12} onChange={(v) => set((k) => { k.tolerance = v; k.enabled = true; })} />
       <Slider label="Softness" value={key.softness} min={0} max={40} unit="%" defaultValue={8} onChange={(v) => set((k) => { k.softness = v; k.enabled = true; })} />
+    </Section>
+  );
+}
+
+function SwirlSection({ layer, s }: { layer: Layer; s: SwirlProps }) {
+  const set = (label: string, patch: Partial<SwirlProps>) =>
+    up(layer, label, (l) => {
+      l.swirl = { ...l.swirl!, ...patch };
+    });
+  const setColor = (i: number, c: string) => {
+    const pal = [...s.palette];
+    pal[i] = c;
+    set('Swirl colors', { palette: pal });
+  };
+  return (
+    <Section title="Magic swirl">
+      <div className="row">
+        {SWIRL_PRESETS.map((p) => (
+          <button
+            type="button"
+            key={p.id}
+            className="preset-chip"
+            title={p.label}
+            aria-label={`${p.label} colors`}
+            style={{ background: `linear-gradient(90deg, ${p.palette.join(',')})` }}
+            onClick={() => set('Swirl colors', { palette: [...p.palette] })}
+          />
+        ))}
+      </div>
+      <div className="row">
+        {s.palette.map((c, i) => (
+          <input
+            key={i}
+            type="color"
+            className="mini-color"
+            aria-label={`Swirl color ${i + 1}`}
+            value={c}
+            onChange={(e) => setColor(i, e.target.value)}
+          />
+        ))}
+        {s.palette.length < 6 && (
+          <button type="button" className="btn small" onClick={() => set('Swirl colors', { palette: [...s.palette, s.palette[s.palette.length - 1] ?? '#ffffff'] })}>
+            + color
+          </button>
+        )}
+        {s.palette.length > 1 && (
+          <button type="button" className="btn small ghost" onClick={() => set('Swirl colors', { palette: s.palette.slice(0, -1) })}>
+            − color
+          </button>
+        )}
+      </div>
+      <Slider label="Strands" value={s.strands} min={1} max={6} onChange={(v) => set('Strands', { strands: v })} />
+      <Slider label="Twists" value={s.wraps} min={0} max={40} step={0.5} onChange={(v) => set('Twists', { wraps: v })} />
+      <Slider label="Spread" value={s.amplitude} min={0} max={400} unit="px" onChange={(v) => set('Spread', { amplitude: v })} />
+      <Slider label="Thickness" value={s.width} min={1} max={80} unit="px" onChange={(v) => set('Thickness', { width: v })} />
+      <Slider label="Glow" value={s.glow} min={0} max={120} unit="px" onChange={(v) => set('Glow', { glow: v })} />
+      <Slider label="Sparkles" value={s.sparkles} min={0} max={200} onChange={(v) => set('Sparkles', { sparkles: v })} />
+      <Slider label="Depth" value={Math.round(s.depth * 100)} min={0} max={100} unit="%" onChange={(v) => set('Depth', { depth: v / 100 })} />
+      <Slider label="Taper ends" value={Math.round(s.taper * 100)} min={0} max={50} unit="%" onChange={(v) => set('Taper', { taper: v / 100 })} />
+      <div className="row">
+        <button type="button" className="btn small" onClick={() => set('Shuffle sparkles', { seed: Math.floor(Math.random() * 1e9) })}>
+          Shuffle sparkles
+        </button>
+        <button
+          type="button"
+          className="btn small"
+          onClick={() => {
+            store.set({ tool: 'swirl', swirlRedrawId: layer.id });
+            store.toast('Draw the new path on the canvas');
+          }}
+        >
+          Redraw path
+        </button>
+      </div>
+      <p className="hint">
+        Depth fades the half of each loop that goes "behind". To wrap it around an arm, add a mask and paint out the parts that should pass behind her.
+      </p>
     </Section>
   );
 }
@@ -606,6 +686,17 @@ function EffectsTab({ layer }: { layer: Layer }) {
           Reset effects
         </button>
       </div>
+      <Section title="Outline" enabled={!!fx.outline?.enabled} onToggle={(v) => set('Outline', (f) => (f.outline = { ...(f.outline ?? defaultEffects().outline), enabled: v }))}>
+        <p className="hint">A solid edge around the layer's shape — great with a glow for a magical aura.</p>
+        <ColorField label="Color" value={fx.outline?.color ?? '#39ff88'} onChange={(v) => set('Outline', (f) => (f.outline = { ...(f.outline ?? defaultEffects().outline), color: v, enabled: true }))} />
+        <Slider label="Size" value={fx.outline?.size ?? 6} min={1} max={60} unit="px" onChange={(v) => set('Outline', (f) => (f.outline = { ...(f.outline ?? defaultEffects().outline), size: v, enabled: true }))} />
+        <Slider label="Opacity" value={Math.round((fx.outline?.opacity ?? 1) * 100)} min={0} max={100} unit="%" onChange={(v) => set('Outline', (f) => (f.outline = { ...(f.outline ?? defaultEffects().outline), opacity: v / 100, enabled: true }))} />
+      </Section>
+      <Section title="Color overlay" enabled={!!fx.overlay?.enabled} onToggle={(v) => set('Color overlay', (f) => (f.overlay = { ...(f.overlay ?? defaultEffects().overlay), enabled: v }))}>
+        <p className="hint">Washes the whole layer in one color. Low amounts tint; 100% makes a solid silhouette.</p>
+        <ColorField label="Color" value={fx.overlay?.color ?? '#7a4cff'} onChange={(v) => set('Color overlay', (f) => (f.overlay = { ...(f.overlay ?? defaultEffects().overlay), color: v, enabled: true }))} />
+        <Slider label="Amount" value={Math.round((fx.overlay?.opacity ?? 0.5) * 100)} min={0} max={100} unit="%" onChange={(v) => set('Color overlay', (f) => (f.overlay = { ...(f.overlay ?? defaultEffects().overlay), opacity: v / 100, enabled: true }))} />
+      </Section>
       <Section title="Rim light" enabled={fx.rim.enabled} onToggle={(v) => set('Rim light', (f) => (f.rim.enabled = v))}>
         <p className="hint">A glowing edge on the side facing a light — match it to the moon.</p>
         <ColorField label="Color" value={fx.rim.color} onChange={(v) => set('Rim light', (f) => { f.rim.color = v; f.rim.enabled = true; })} />

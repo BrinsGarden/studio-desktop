@@ -1,5 +1,6 @@
 import { store } from './store';
 import {
+  SWIRL_PRESETS,
   createCanvas,
   defaultFill,
   defaultText,
@@ -9,7 +10,9 @@ import {
   type Layer,
 } from './engine/types';
 import { download, exportImage, imageLayer, loadImageFile, parseProject, pickFile, serializeProject } from './engine/io';
-import { dropCaches, getSource, sourceSize, syncMaskSize } from './engine/render';
+import { dropCaches, getSource, layerMatrix, sourceSize, syncMaskSize } from './engine/render';
+import { invertSelection, selectAll as selAll, selectionLocalBounds, selectionMaskForLayer, type Pt } from './engine/selection';
+import { centerPath } from './engine/swirl';
 
 export function newDocument(width: number, height: number, dpi: number, name: string, background: string) {
   const doc: Doc = { width, height, dpi, name, background, layers: [] };
@@ -162,6 +165,7 @@ export function duplicateLayer(id = store.state.selectedId) {
     fx: JSON.parse(JSON.stringify(src.fx)),
     text: src.text ? { ...src.text } : undefined,
     fill: src.fill ? { ...src.fill } : undefined,
+    swirl: src.swirl ? JSON.parse(JSON.stringify(src.swirl)) : undefined,
     version: 0,
   };
   store.mutate('Duplicate layer', (d) => {
@@ -192,7 +196,7 @@ export function nudgeLayer(dir: 1 | -1) {
 export function rasterize(id = store.state.selectedId) {
   const doc = store.state.doc;
   const l = doc?.layers.find((x) => x.id === id);
-  if (!doc || !l || (l.kind !== 'text' && l.kind !== 'fill')) return;
+  if (!doc || !l || (l.kind !== 'text' && l.kind !== 'fill' && l.kind !== 'swirl')) return;
   const src = getSource(l, doc);
   if (!src) return;
   const c = createCanvas(src.width, src.height);
@@ -203,6 +207,7 @@ export function rasterize(id = store.state.selectedId) {
     x.canvas = c;
     x.text = undefined;
     x.fill = undefined;
+    x.swirl = undefined;
     x.version++;
   }, 'Rasterize');
 }
@@ -224,7 +229,7 @@ export function fitLayerToCanvas(mode: 'fit' | 'fill') {
 export function ensureMasksSynced() {
   const doc = store.state.doc;
   if (!doc) return;
-  doc.layers.forEach((l) => l.kind === 'text' && syncMaskSize(l, doc));
+  doc.layers.forEach((l) => (l.kind === 'text' || l.kind === 'swirl') && syncMaskSize(l, doc));
 }
 
 /* ---------------- files ---------------- */
@@ -261,4 +266,209 @@ export async function exportAs(format: 'png' | 'jpeg') {
   } catch (e) {
     store.toast((e as Error).message);
   }
+}
+
+/* ---------------- selection ---------------- */
+function copyCanvas(c: HTMLCanvasElement): HTMLCanvasElement {
+  const n = createCanvas(c.width, c.height);
+  n.getContext('2d')!.drawImage(c, 0, 0);
+  return n;
+}
+
+export function deselect() {
+  if (store.state.selection) store.set({ selection: null });
+}
+
+export function selectAll() {
+  const doc = store.state.doc;
+  if (doc) store.set({ selection: selAll(doc), tool: store.state.tool === 'move' ? 'select' : store.state.tool });
+}
+
+export function invertSel() {
+  const doc = store.state.doc;
+  if (doc) store.set({ selection: invertSelection(store.state.selection, doc) });
+}
+
+function needSelection(): { doc: Doc; layer: Layer } | null {
+  const { doc, selection } = store.state;
+  const layer = store.selected();
+  if (!doc || !selection) {
+    store.toast('Make a selection first (Select tool, L)');
+    return null;
+  }
+  if (!layer) {
+    store.toast('Pick the layer to work on in the Layers panel');
+    return null;
+  }
+  return { doc, layer };
+}
+
+/** Copy (or cut) the selected part of the current layer into a new layer above it. */
+export function selectionToLayer(cut: boolean) {
+  const ctx = needSelection();
+  if (!ctx) return;
+  const { doc, layer } = ctx;
+  const sel = store.state.selection!;
+  const feather = store.state.feather;
+  if (layer.kind === 'adjust') {
+    store.toast('Adjustment layers have no pixels to copy — pick an image layer');
+    return;
+  }
+  if (cut && layer.kind !== 'image') {
+    store.toast('Cut works on image layers — use Copy, or Rasterize this layer first');
+    return;
+  }
+  const src = getSource(layer, doc);
+  if (!src) return;
+  const box = selectionLocalBounds(sel, layer, doc, feather);
+  if (!box) {
+    store.toast('The selection does not overlap this layer');
+    return;
+  }
+  const selMask = selectionMaskForLayer(sel, layer, doc, feather);
+  const piece = createCanvas(box.w, box.h);
+  const pc = piece.getContext('2d')!;
+  pc.drawImage(src, -box.x, -box.y);
+  pc.globalCompositeOperation = 'destination-in';
+  pc.drawImage(selMask, -box.x, -box.y);
+  if (layer.mask && layer.maskEnabled) pc.drawImage(layer.mask, -box.x, -box.y);
+  pc.globalCompositeOperation = 'source-over';
+
+  const { w, h } = sourceSize(layer, doc);
+  const center = layerMatrix(layer, w, h).transformPoint(new DOMPoint(box.x + box.w / 2, box.y + box.h / 2));
+  const piecLayer: Layer = {
+    ...makeLayer('image', `${layer.name} ${cut ? 'cut' : 'copy'}`),
+    canvas: piece,
+    x: center.x,
+    y: center.y,
+    scale: layer.scale,
+    rotation: layer.rotation,
+    flipX: layer.flipX,
+    flipY: layer.flipY,
+    blend: layer.blend,
+    opacity: layer.opacity,
+    adj: JSON.parse(JSON.stringify(layer.adj)),
+    fx: JSON.parse(JSON.stringify(layer.fx)),
+  };
+
+  let remaining: HTMLCanvasElement | null = null;
+  if (cut && layer.canvas) {
+    remaining = copyCanvas(layer.canvas);
+    const rc = remaining.getContext('2d')!;
+    rc.globalCompositeOperation = 'destination-out';
+    rc.drawImage(selMask, 0, 0);
+  }
+  store.mutate(cut ? 'Cut to new layer' : 'Copy to new layer', (d) => {
+    const i = d.layers.findIndex((l) => l.id === layer.id);
+    if (remaining) {
+      d.layers[i].canvas = remaining;
+      d.layers[i].version++;
+    }
+    d.layers.splice(i + 1, 0, piecLayer);
+    return piecLayer.id;
+  });
+  if (remaining) dropCaches(layer.id);
+  store.set({ selection: null, tool: 'move', editMask: false });
+  store.toast(`${cut ? 'Cut' : 'Copied'} to new layer "${piecLayer.name}" — drag it where you want it`);
+}
+
+/** Erase the selected pixels from the current image layer. */
+export function deleteSelectedPixels() {
+  const ctx = needSelection();
+  if (!ctx) return;
+  const { doc, layer } = ctx;
+  if (layer.kind !== 'image' || !layer.canvas) {
+    store.toast('Delete works on image layers — use "Mask: hide selection" for other layers');
+    return;
+  }
+  const selMask = selectionMaskForLayer(store.state.selection!, layer, doc, store.state.feather);
+  const next = copyCanvas(layer.canvas);
+  const nc = next.getContext('2d')!;
+  nc.globalCompositeOperation = 'destination-out';
+  nc.drawImage(selMask, 0, 0);
+  dropCaches(layer.id);
+  store.updateLayer(layer.id, (l) => {
+    l.canvas = next;
+    l.version++;
+  }, 'Delete pixels', `del${Date.now()}`);
+}
+
+/** Make (or update) the current layer's mask from the selection. */
+export function maskFromSelection(mode: 'reveal' | 'hide') {
+  const ctx = needSelection();
+  if (!ctx) return;
+  const { doc, layer } = ctx;
+  const { w, h } = sourceSize(layer, doc);
+  const selMask = selectionMaskForLayer(store.state.selection!, layer, doc, store.state.feather);
+  const mask = createCanvas(w, h);
+  const mc = mask.getContext('2d')!;
+  if (layer.mask) mc.drawImage(layer.mask, 0, 0, w, h);
+  else {
+    mc.fillStyle = '#fff';
+    mc.fillRect(0, 0, w, h);
+  }
+  mc.globalCompositeOperation = mode === 'reveal' ? 'destination-in' : 'destination-out';
+  mc.drawImage(selMask, 0, 0);
+  store.updateLayer(layer.id, (l) => {
+    l.mask = mask;
+    l.maskEnabled = true;
+  }, mode === 'reveal' ? 'Mask to selection' : 'Hide selection', `mask${Date.now()}`);
+  store.set({ selection: null });
+  store.toast(mode === 'reveal' ? 'Only the selected area shows now (mask added)' : 'Selected area hidden (mask added) — paint white to bring parts back');
+}
+
+/* ---------------- swirls ---------------- */
+export function swirlPalette(presetId: string): string[] {
+  return [...(SWIRL_PRESETS.find((p) => p.id === presetId) ?? SWIRL_PRESETS[0]).palette];
+}
+
+/** Create a swirl layer from a path drawn in document coordinates (or redraw an existing one). */
+export function createSwirl(pts: Pt[]) {
+  const doc = store.state.doc;
+  if (!doc || pts.length < 2) return;
+  const redrawId = store.state.swirlRedrawId;
+  const target = redrawId ? doc.layers.find((l) => l.id === redrawId && l.kind === 'swirl') : null;
+  if (target && target.swirl) {
+    // express the new path in the existing layer's local space so its transform still applies
+    const { w, h } = sourceSize(target, doc);
+    const m = layerMatrix(target, w, h);
+    const inv = m.inverse();
+    const local = pts.map((p) => {
+      const q = inv.transformPoint(new DOMPoint(p.x, p.y));
+      return { x: q.x - w / 2, y: q.y - h / 2 };
+    });
+    const { center, points } = centerPath(local);
+    const c = m.transformPoint(new DOMPoint(center.x + w / 2, center.y + h / 2));
+    store.updateLayer(target.id, (l) => {
+      l.swirl = { ...l.swirl!, points };
+      l.x = c.x;
+      l.y = c.y;
+    }, 'Redraw swirl', `swirl${Date.now()}`);
+    store.set({ swirlRedrawId: null });
+    return;
+  }
+  const d = store.state.swirl;
+  const { center, points } = centerPath(pts);
+  const layer = makeLayer('swirl', 'Magic swirl', {
+    x: center.x,
+    y: center.y,
+    blend: 'source-over',
+    swirl: {
+      points,
+      palette: swirlPalette(d.preset),
+      width: d.width,
+      strands: d.strands,
+      wraps: Math.max(2, Math.round(Math.hypot(...pts.reduce((acc, p, i) => (i ? [acc[0] + Math.abs(p.x - pts[i - 1].x), acc[1] + Math.abs(p.y - pts[i - 1].y)] : acc), [0, 0])) / (d.amplitude * 5))),
+      amplitude: d.amplitude,
+      glow: Math.round(d.width * 1.6),
+      sparkles: 30,
+      depth: 0.6,
+      taper: 0.15,
+      seed: Math.floor(Math.random() * 1e9),
+    },
+  });
+  store.mutate('Add swirl', (dd) => {
+    insertAboveSelected(dd, layer);
+    return layer.id;
+  });
 }

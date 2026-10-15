@@ -22,10 +22,22 @@ export class Stroke {
   private maxX = -Infinity;
   private maxY = -Infinity;
   private mode: StrokeMode;
+  private clip: HTMLCanvasElement | null;
+  private dabCanvas: HTMLCanvasElement | null = null;
   readonly target: HTMLCanvasElement;
 
-  constructor(target: HTMLCanvasElement, mode: StrokeMode, color: string, diameter: number, hardness: number, opacity: number) {
+  /** `clip` (same size as target) limits painting to its opaque area, e.g. the active selection. */
+  constructor(
+    target: HTMLCanvasElement,
+    mode: StrokeMode,
+    color: string,
+    diameter: number,
+    hardness: number,
+    opacity: number,
+    clip: HTMLCanvasElement | null = null,
+  ) {
     this.target = target;
+    this.clip = clip;
     this.mode = mode;
     this.ctx = target.getContext('2d', { willReadFrequently: true })!;
     this.backup = createCanvas(target.width, target.height);
@@ -42,7 +54,19 @@ export class Stroke {
   private dab(x: number, y: number) {
     const r = this.radius;
     this.ctx.globalCompositeOperation = this.mode === 'erase' || this.mode === 'hide' ? 'destination-out' : 'source-over';
-    this.ctx.drawImage(this.stamp, x - this.stamp.width / 2, y - this.stamp.height / 2);
+    const sx = x - this.stamp.width / 2;
+    const sy = y - this.stamp.height / 2;
+    if (this.clip) {
+      if (!this.dabCanvas) this.dabCanvas = createCanvas(this.stamp.width, this.stamp.height);
+      const d = this.dabCanvas.getContext('2d')!;
+      d.globalCompositeOperation = 'copy';
+      d.drawImage(this.stamp, 0, 0);
+      d.globalCompositeOperation = 'destination-in';
+      d.drawImage(this.clip, -sx, -sy);
+      this.ctx.drawImage(this.dabCanvas, sx, sy);
+    } else {
+      this.ctx.drawImage(this.stamp, sx, sy);
+    }
     this.ctx.globalCompositeOperation = 'source-over';
     this.minX = Math.min(this.minX, x - r - 2);
     this.minY = Math.min(this.minY, y - r - 2);

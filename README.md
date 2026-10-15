@@ -8,12 +8,14 @@ A lightweight, Photoshop-style poster editor that runs in the browser. Built for
 
 - **Layers** — image, text, gradient/fill, and color-adjustment layers; drag to reorder, show/hide, rename, duplicate
 - **Blend modes & opacity** — Normal, Multiply, Screen, Overlay, Soft Light, Color, Luminosity and more
+- **Selections** — Lasso, Polygon, Ellipse and Rectangle with feather, Shift to add, Alt to subtract, invert. Copy or cut the selection to a new layer (Ctrl+J / Ctrl+Shift+J), delete pixels, or turn it into a mask. Painting stays inside the selection.
+- **Magic swirl** — draw a path and get glowing, multi-strand colorful ribbons with sparkles; presets (Witchy, Rainbow, Fire, Toxic, Ice, Blood moon), editable strands, twists, spread, thickness, glow, depth and taper
 - **Masks** — paint black to hide, white to reveal (press `X` to swap); invert, toggle, view as black & white (`\`)
 - **Color tools** (non-destructive, per layer)
   - **Match color** — pulls a cutout's colors toward the backdrop; the fastest way to blend people into a scene
   - Brightness/Contrast, Levels, Curves (RGB + per channel), Hue/Saturation/Lightness, Color Balance (shadows/mids/highlights), Tint
   - Adjustment layers recolor everything below them
-- **Effects** — rim light (glowing edge facing the light), outer glow, drop shadow, blur
+- **Effects** — rim light (glowing edge facing the light), outer glow, outline, color overlay, drop shadow, blur
 - **Edge cleanup** — shrink and soften cutout edges to kill halos
 - **Text** — spooky Google Fonts (Creepster, Nosifer, Butcherman…), gradient fill, outline
 - **Print export** — full-resolution PNG/JPG with DPI embedded; poster presets (18×24, 24×36, 11×17…)
@@ -24,14 +26,18 @@ A lightweight, Photoshop-style poster editor that runs in the browser. Built for
 
 | Key | Action |
 | --- | --- |
-| V / B / E / I / H | Move, Brush, Eraser, Eyedropper, Hand |
+| V / L / B / E / S / I / H | Move, Select, Brush, Eraser, Swirl, Eyedropper, Hand |
+| Ctrl+D / Ctrl+A / Ctrl+Shift+I | Deselect / Select all / Invert |
+| Ctrl+Shift+J | Cut selection to new layer |
+| Del (with selection) | Delete selected pixels |
+| Enter / Esc | Finish / cancel polygon selection |
 | Space (hold) | Pan |
 | Scroll | Zoom · Shift+scroll pans |
 | [ / ] | Brush size |
 | X | Swap mask hide/reveal |
 | \ | Show mask |
 | Ctrl+Z / Ctrl+Y | Undo / Redo |
-| Ctrl+J | Duplicate layer |
+| Ctrl+J | Copy selection to new layer (or duplicate layer) |
 | Ctrl+S | Save project |
 | Ctrl+Shift+E | Export PNG |
 | Ctrl+0 / Ctrl+1 | Fit / 100% |
