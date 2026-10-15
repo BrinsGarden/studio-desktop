@@ -1,4 +1,4 @@
-import { applyAdjustments, computeStats, isIdentity, processEdges, hexToRgb, type ChannelStats } from './adjust';
+import { applyAdjustments, computeStats, isIdentity, keyOutColor, processEdges, hexToRgb, type ChannelStats } from './adjust';
 import { createCanvas, type Doc, type Layer, type TextProps, type FillProps } from './types';
 
 /* ------------------------------------------------------------------ */
@@ -207,8 +207,9 @@ export function hitTest(layer: Layer, doc: Doc, x: number, y: number): boolean {
   if (!src) return false;
   const p = docToLocal(layer, doc, x, y);
   if (p.x < 0 || p.y < 0 || p.x >= src.width || p.y >= src.height) return false;
-  const a = src.getContext('2d')!.getImageData(Math.floor(p.x), Math.floor(p.y), 1, 1).data[3];
-  if (a < 20) return false;
+  const px = src.getContext('2d')!.getImageData(Math.floor(p.x), Math.floor(p.y), 1, 1).data;
+  if (layer.fx.key?.enabled) keyOutColor(px, hexToRgb(layer.fx.key.color), layer.fx.key.tolerance, layer.fx.key.softness);
+  if (px[3] < 20) return false;
   if (layer.mask && layer.maskEnabled) {
     const m = layer.mask.getContext('2d')!.getImageData(Math.floor(p.x), Math.floor(p.y), 1, 1).data[3];
     if (m < 20) return false;
@@ -239,7 +240,7 @@ export function layerStats(layer: Layer, doc: Doc): ChannelStats | null {
 const adjustedCache = new Map<string, { key: string; canvas: HTMLCanvasElement }>();
 
 function needsPixelWork(layer: Layer): boolean {
-  return !isIdentity(layer.adj) || layer.fx.shrinkEdge > 0 || layer.fx.softenEdge > 0;
+  return !isIdentity(layer.adj) || layer.fx.shrinkEdge > 0 || layer.fx.softenEdge > 0 || !!layer.fx.key?.enabled;
 }
 
 /** Source with adjustments and edge processing baked, at resolution factor f (<=1). */
@@ -258,6 +259,7 @@ function adjustedSource(layer: Layer, doc: Doc, f: number): HTMLCanvasElement | 
     h,
     JSON.stringify(layer.adj),
     layer.fx.shrinkEdge,
+    JSON.stringify(layer.fx.key ?? null),
     layer.fx.softenEdge,
     tStats ? tStats.mean.join(',') + tStats.std.join(',') : '',
     src === layer.canvas ? '' : JSON.stringify(layer.text ?? layer.fill) + fontEpoch,
@@ -269,6 +271,9 @@ function adjustedSource(layer: Layer, doc: Doc, f: number): HTMLCanvasElement | 
   ctx.clearRect(0, 0, w, h);
   ctx.drawImage(src, 0, 0, w, h);
   const img = ctx.getImageData(0, 0, w, h);
+  if (layer.fx.key?.enabled) {
+    keyOutColor(img.data, hexToRgb(layer.fx.key.color), layer.fx.key.tolerance, layer.fx.key.softness);
+  }
   if (!isIdentity(layer.adj)) applyAdjustments(img.data, layer.adj, sStats, tStats);
   if (layer.fx.shrinkEdge > 0 || layer.fx.softenEdge > 0) {
     processEdges(img.data, w, h, layer.fx.shrinkEdge * f, layer.fx.softenEdge * f);

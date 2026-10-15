@@ -1,4 +1,4 @@
-import { createCanvas, makeLayer, type Doc, type Layer } from './types';
+import { createCanvas, defaultAdjustments, defaultEffects, makeLayer, type Doc, type Layer } from './types';
 import { renderDoc } from './render';
 
 export function loadImageFile(file: Blob): Promise<HTMLCanvasElement> {
@@ -60,6 +60,8 @@ export async function parseProject(text: string): Promise<Doc> {
     layers.push({
       ...makeLayer(l.kind, l.name),
       ...l,
+      adj: { ...defaultAdjustments(), ...l.adj },
+      fx: { ...defaultEffects(), ...l.fx },
       canvas: l.canvas ? await dataUrlToCanvas(l.canvas) : null,
       mask: l.mask ? await dataUrlToCanvas(l.mask) : null,
       version: 0,

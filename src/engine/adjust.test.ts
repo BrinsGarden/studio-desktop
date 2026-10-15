@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyAdjustments, buildChannelLuts, computeStats, curveLut, isIdentity, processEdges } from './adjust';
+import { applyAdjustments, buildChannelLuts, computeStats, curveLut, isIdentity, keyOutColor, processEdges } from './adjust';
 import { defaultAdjustments } from './types';
 import { crc32, setPngDpi, setJpegDpi } from './io';
 
@@ -128,5 +128,16 @@ describe('dpi metadata', () => {
     const out = setJpegDpi(jpg, 150);
     expect(out[13]).toBe(1);
     expect((out[14] << 8) | out[15]).toBe(150);
+  });
+});
+
+describe('remove background color', () => {
+  it('clears black, keeps dark rust, feathers in between', () => {
+    const d = px(5, 5, 5, 255, 90, 60, 40, 255, 30, 30, 30, 255);
+    keyOutColor(d, [0, 0, 0], 8, 10);
+    expect(d[3]).toBe(0);
+    expect(d[7]).toBe(255);
+    expect(d[11]).toBeGreaterThan(0);
+    expect(d[11]).toBeLessThan(255);
   });
 });

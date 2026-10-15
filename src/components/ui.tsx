@@ -80,7 +80,11 @@ export function Section(props: {
         </button>
         {props.onToggle && (
           <label className="switch" title={props.enabled ? 'Turn off' : 'Turn on'}>
-            <input type="checkbox" checked={!!props.enabled} onChange={(e) => props.onToggle!(e.target.checked)} />
+            <input type="checkbox" checked={!!props.enabled} onChange={(e) => {
+                props.onToggle!(e.target.checked);
+                if (e.target.checked) setOpen(true);
+              }}
+            />
             <span />
             <span className="sr-only">{props.title} on</span>
           </label>

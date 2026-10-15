@@ -217,6 +217,8 @@ function LayerTab({ layer }: { layer: Layer }) {
         )}
       </Section>
 
+      {layer.kind === 'image' && <KeySection layer={layer} />}
+
       {layer.kind !== 'adjust' && (
         <Section title="Edges & blur" defaultOpen={layer.kind === 'image'}>
           <p className="hint">Clean up cutout halos: shrink pulls the edge in, soften feathers it.</p>
@@ -251,6 +253,49 @@ function LayerTab({ layer }: { layer: Layer }) {
         </Section>
       )}
     </>
+  );
+}
+
+function KeySection({ layer }: { layer: Layer }) {
+  const brushColor = useStore((s) => s.brush.color);
+  const key = layer.fx.key ?? defaultEffects().key;
+  const set = (fn: (k: Effects['key']) => void) =>
+    up(layer, 'Remove background color', (l) => {
+      const k = { ...(l.fx.key ?? defaultEffects().key) };
+      fn(k);
+      l.fx.key = k;
+    });
+  return (
+    <Section
+      title="Remove background color"
+      defaultOpen={key.enabled}
+      enabled={key.enabled}
+      onToggle={(v) => set((k) => (k.enabled = v))}
+    >
+      <p className="hint">
+        For images shot on a plain background (like a cage on black). Makes that color see-through, including gaps between bars.
+        Raise Tolerance until the background is gone, then Softness to smooth the edges.
+      </p>
+      <ColorField label="Background" value={key.color} onChange={(v) => set((k) => { k.color = v; k.enabled = true; })} />
+      <div className="row">
+        <button type="button" className="btn small" onClick={() => set((k) => { k.color = '#000000'; k.enabled = true; })}>
+          Black
+        </button>
+        <button type="button" className="btn small" onClick={() => set((k) => { k.color = '#ffffff'; k.enabled = true; })}>
+          White
+        </button>
+        <button
+          type="button"
+          className="btn small"
+          title="Use the color picked with the Eyedropper tool (I)"
+          onClick={() => set((k) => { k.color = brushColor; k.enabled = true; })}
+        >
+          <span className="dot" style={{ background: brushColor }} aria-hidden="true" /> Eyedropper color
+        </button>
+      </div>
+      <Slider label="Tolerance" value={key.tolerance} min={0} max={60} unit="%" defaultValue={12} onChange={(v) => set((k) => { k.tolerance = v; k.enabled = true; })} />
+      <Slider label="Softness" value={key.softness} min={0} max={40} unit="%" defaultValue={8} onChange={(v) => set((k) => { k.softness = v; k.enabled = true; })} />
+    </Section>
   );
 }
 
@@ -554,7 +599,7 @@ function EffectsTab({ layer }: { layer: Layer }) {
           onClick={() =>
             up(layer, 'Reset effects', (l) => {
               const d = defaultEffects();
-              l.fx = { ...d, shrinkEdge: l.fx.shrinkEdge, softenEdge: l.fx.softenEdge, blur: l.fx.blur };
+              l.fx = { ...d, key: l.fx.key, shrinkEdge: l.fx.shrinkEdge, softenEdge: l.fx.softenEdge, blur: l.fx.blur };
             })
           }
         >

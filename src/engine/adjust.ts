@@ -342,3 +342,24 @@ function boxBlur1D(src: Float32Array, dst: Float32Array, w: number, h: number, r
 export function balanceTriple(v: BalanceTriple): BalanceTriple {
   return [v[0], v[1], v[2]];
 }
+
+/**
+ * Remove a background color: pixels within `tolerance`% of `color` become transparent,
+ * with a `softness`% feathered band above that. Alpha only ever goes down. In place.
+ */
+export function keyOutColor(data: Uint8ClampedArray, color: [number, number, number], tolerance: number, softness: number): void {
+  const MAX = Math.sqrt(3 * 255 * 255);
+  const t0 = (tolerance / 100) * MAX;
+  const t1 = t0 + Math.max(0.5, (softness / 100) * MAX);
+  const [kr, kg, kb] = color;
+  for (let i = 0; i < data.length; i += 4) {
+    if (data[i + 3] === 0) continue;
+    const dr = data[i] - kr;
+    const dg = data[i + 1] - kg;
+    const db = data[i + 2] - kb;
+    const d = Math.sqrt(dr * dr + dg * dg + db * db);
+    if (d >= t1) continue;
+    const keep = d <= t0 ? 0 : (d - t0) / (t1 - t0);
+    data[i + 3] = Math.round(data[i + 3] * keep);
+  }
+}
