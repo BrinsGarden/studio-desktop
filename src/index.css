@@ -61,12 +61,18 @@ kbd {
 .app {
   display: grid;
   grid-template-rows: 44px 44px 1fr;
+  grid-template-columns: minmax(0, 1fr);
   height: 100%;
+  overflow: hidden;
+}
+.app > * {
+  min-width: 0;
 }
 .workspace {
   display: grid;
-  grid-template-columns: 52px 1fr 340px;
+  grid-template-columns: 52px minmax(0, 1fr) 340px;
   min-height: 0;
+  min-width: 0;
 }
 .stage {
   min-width: 0;
@@ -79,12 +85,16 @@ kbd {
   border-left: 1px solid var(--line);
   background: var(--panel);
   min-height: 0;
+  min-width: 0;
+  overflow: hidden;
 }
 
 /* ---------- top bar ---------- */
 .topbar {
   display: flex;
   align-items: center;
+  overflow-x: auto;
+  overflow-y: hidden;
   gap: 4px;
   padding: 0 10px;
   background: var(--panel);
@@ -723,6 +733,7 @@ kbd {
 }
 .layer-actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 2px;
   padding: 6px 8px;

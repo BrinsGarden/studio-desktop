@@ -17,6 +17,7 @@ import {
   selectAll,
   selectionToLayer,
   duplicateLayer,
+  nudgeLayer,
   exportAs,
   openImagesDialog,
   openProject,
@@ -178,6 +179,9 @@ export default function App() {
       } else if (ctrl && k === 'e' && e.shiftKey) {
         e.preventDefault();
         exportAs('png');
+      } else if (ctrl && (k === ']' || k === '[')) {
+        e.preventDefault();
+        nudgeLayer(k === ']' ? 1 : -1);
       } else if (ctrl && (k === '0')) {
         e.preventDefault();
         window.dispatchEvent(new Event('sd:fit'));
@@ -256,6 +260,8 @@ export default function App() {
             { label: 'Undo', hint: 'Ctrl+Z', run: () => store.undo(), disabled: !canUndo },
             { label: 'Redo', hint: 'Ctrl+Y', run: () => store.redo(), disabled: !canRedo },
             '-',
+            { label: 'Bring layer forward', hint: 'Ctrl+]', run: () => nudgeLayer(1), disabled: !selectedId },
+            { label: 'Send layer backward', hint: 'Ctrl+[', run: () => nudgeLayer(-1), disabled: !selectedId },
             { label: 'Duplicate layer', hint: 'Ctrl+J', run: () => duplicateLayer(), disabled: !selectedId },
             { label: 'Add mask', run: addMask, disabled: !selectedId },
             { label: 'Delete layer', hint: 'Del', run: () => deleteLayer(), disabled: !selectedId },
