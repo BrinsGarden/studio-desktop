@@ -48,9 +48,22 @@ export default function LayersPanel() {
 
   return (
     <div className="layers">
-      <div className="panel-head">
+      <div className="panel-head layers-head">
         <span>Layers</span>
-        <span className="muted">{doc.layers.length}</span>
+        <div className="layer-ops">
+          <button type="button" className="icon-btn" title="Move layer up (Ctrl+])" aria-label="Move layer up" onClick={() => nudgeLayer(1)} disabled={!selectedId}>
+            <Icon name="up" size={16} />
+          </button>
+          <button type="button" className="icon-btn" title="Move layer down (Ctrl+[)" aria-label="Move layer down" onClick={() => nudgeLayer(-1)} disabled={!selectedId}>
+            <Icon name="down" size={16} />
+          </button>
+          <button type="button" className="icon-btn" title="Duplicate (Ctrl+J)" aria-label="Duplicate layer" onClick={() => duplicateLayer()} disabled={!selectedId}>
+            <Icon name="copy" size={16} />
+          </button>
+          <button type="button" className="icon-btn danger" title="Delete layer (Del)" aria-label="Delete layer" onClick={() => deleteLayer()} disabled={!selectedId}>
+            <Icon name="trash" size={16} />
+          </button>
+        </div>
       </div>
       <ul className="layer-list" role="listbox" aria-label="Layers">
         {rows.length === 0 && <li className="empty-row">No layers yet — add an image below.</li>}
@@ -172,19 +185,6 @@ export default function LayersPanel() {
         </button>
         <button type="button" className="icon-btn" title="Add mask to selected layer" aria-label="Add mask" onClick={addMask} disabled={!selectedId}>
           <Icon name="mask" />
-        </button>
-        <span className="spacer" />
-        <button type="button" className="icon-btn" title="Move layer up" aria-label="Move layer up" onClick={() => nudgeLayer(1)} disabled={!selectedId}>
-          <Icon name="up" />
-        </button>
-        <button type="button" className="icon-btn" title="Move layer down" aria-label="Move layer down" onClick={() => nudgeLayer(-1)} disabled={!selectedId}>
-          <Icon name="down" />
-        </button>
-        <button type="button" className="icon-btn" title="Duplicate (Ctrl+J)" aria-label="Duplicate layer" onClick={() => duplicateLayer()} disabled={!selectedId}>
-          <Icon name="copy" />
-        </button>
-        <button type="button" className="icon-btn danger" title="Delete layer (Del)" aria-label="Delete layer" onClick={() => deleteLayer()} disabled={!selectedId}>
-          <Icon name="trash" />
         </button>
       </div>
     </div>

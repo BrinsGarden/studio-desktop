@@ -733,7 +733,6 @@ kbd {
 }
 .layer-actions {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
   gap: 2px;
   padding: 6px 8px;
@@ -871,4 +870,20 @@ kbd {
 }
 .optionsbar .segmented {
   flex-shrink: 0;
+}
+
+.layers-head {
+  justify-content: flex-start;
+  align-items: center;
+  gap: 10px;
+  padding-top: 6px;
+  padding-bottom: 4px;
+}
+.layer-ops {
+  display: flex;
+  gap: 2px;
+}
+.layer-ops .icon-btn {
+  width: 28px;
+  height: 28px;
 }
