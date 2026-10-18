@@ -1,6 +1,7 @@
 import { applyAdjustments, computeStats, isIdentity, keyOutColor, processEdges, hexToRgb, type ChannelStats } from './adjust';
 import { createCanvas, type Doc, type Layer, type TextProps, type FillProps } from './types';
 import { renderSwirl } from './swirl';
+import { renderFire } from './fire';
 import { renderFog } from './fog';
 
 /* ------------------------------------------------------------------ */
@@ -146,7 +147,7 @@ export function getSource(layer: Layer, doc: Doc): HTMLCanvasElement | null {
     const key = JSON.stringify(layer.swirl);
     const hit = swirlCache.get(layer.id);
     if (hit && hit.key === key) return hit.canvas;
-    const canvas = renderSwirl(layer.swirl);
+    const canvas = layer.swirl.style === 'fire' ? renderFire(layer.swirl) : renderSwirl(layer.swirl);
     swirlCache.set(layer.id, { key, canvas });
     return canvas;
   }

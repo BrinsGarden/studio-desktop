@@ -156,7 +156,7 @@ export default function Viewport() {
         ctx.stroke();
       }
       if (g?.kind === 'swirl' && g.pts.length > 1) {
-        const pal = SWIRL_PRESETS.find((p) => p.id === st.swirl.preset)?.palette ?? ['#b04cff'];
+        const pal = st.tool === 'fire' ? ['#ff6a00'] : SWIRL_PRESETS.find((p) => p.id === st.swirl.preset)?.palette ?? ['#b04cff'];
         ctx.save();
         ctx.lineCap = 'round';
         ctx.lineJoin = 'round';
@@ -410,7 +410,7 @@ export default function Viewport() {
       return;
     }
 
-    if (st.tool === 'swirl') {
+    if (st.tool === 'swirl' || st.tool === 'fire') {
       gesture.current = { kind: 'swirl', pts: [dp] };
       return;
     }
@@ -553,7 +553,7 @@ export default function Viewport() {
     if (g?.kind === 'swirl') {
       const len = g.pts.reduce((a, p, i) => (i ? a + Math.hypot(p.x - g.pts[i - 1].x, p.y - g.pts[i - 1].y) : 0), 0);
       if (len * view.current.zoom < 15) {
-        store.toast('Drag along a path to draw a swirl');
+        store.toast(store.state.tool === 'fire' ? 'Drag along the ground where the flames should rise' : 'Drag along a path to draw a swirl');
       } else {
         createSwirl(simplify(g.pts, 4 / view.current.zoom));
       }
@@ -599,7 +599,7 @@ export default function Viewport() {
   };
 
   const cursor =
-    tool === 'hand' ? 'grab' : tool === 'move' ? 'move' : tool === 'eyedropper' || tool === 'select' || tool === 'swirl' ? 'crosshair' : 'none';
+    tool === 'hand' ? 'grab' : tool === 'move' ? 'move' : tool === 'eyedropper' || tool === 'select' || tool === 'swirl' || tool === 'fire' ? 'crosshair' : 'none';
 
   return (
     <div

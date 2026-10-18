@@ -24,7 +24,7 @@ import {
   saveProject,
 } from './actions';
 import { fontString } from './engine/render';
-import { SWIRL_PRESETS } from './engine/types';
+import { SWIRL_PRESETS, FIRE_PRESETS } from './engine/types';
 
 const TOOLS: { id: Tool; label: string; key: string; icon: string }[] = [
   { id: 'move', label: 'Move & resize', key: 'V', icon: 'move' },
@@ -32,6 +32,7 @@ const TOOLS: { id: Tool; label: string; key: string; icon: string }[] = [
   { id: 'brush', label: 'Brush', key: 'B', icon: 'brush' },
   { id: 'eraser', label: 'Eraser', key: 'E', icon: 'eraser' },
   { id: 'swirl', label: 'Magic swirl', key: 'S', icon: 'swirl' },
+  { id: 'fire', label: 'Hellfire', key: 'F', icon: 'fire' },
   { id: 'eyedropper', label: 'Eyedropper', key: 'I', icon: 'eyedropper' },
   { id: 'hand', label: 'Hand (or hold Space)', key: 'H', icon: 'hand' },
 ];
@@ -102,6 +103,7 @@ export default function App() {
   const feather = useStore((s) => s.feather);
   const swirl = useStore((s) => s.swirl);
   const swirlRedrawId = useStore((s) => s.swirlRedrawId);
+  const fire = useStore((s) => s.fire);
   const [showNew, setShowNew] = useState(false);
   const [zoom, setZoom] = useState(1);
 
@@ -201,6 +203,7 @@ export default function App() {
       } else if (k === 'v') store.set({ tool: 'move' });
       else if (k === 'l' || k === 'm') store.set({ tool: 'select' });
       else if (k === 's') store.set({ tool: 'swirl' });
+      else if (k === 'f') store.set({ tool: 'fire' });
       else if (k === 'b') store.set({ tool: 'brush' });
       else if (k === 'e') store.set({ tool: 'eraser' });
       else if (k === 'i') store.set({ tool: 'eyedropper' });
@@ -441,6 +444,34 @@ export default function App() {
             </div>
             <div className="opt-slider">
               <Slider label="Strands" value={swirl.strands} min={1} max={6} onChange={(v) => store.set({ swirl: { ...swirl, strands: v } })} />
+            </div>
+          </>
+        )}
+        {tool === 'fire' && (
+          <>
+            <span className="target-pill">{swirlRedrawId ? 'Redrawing selected fire' : 'Drag along the ground — flames rise up'}</span>
+            <div className="row" role="group" aria-label="Fire colors">
+              {FIRE_PRESETS.map((p) => (
+                <button
+                  type="button"
+                  key={p.id}
+                  className={`preset-chip ${fire.preset === p.id ? 'on' : ''}`}
+                  title={p.label}
+                  aria-label={`${p.label} colors`}
+                  aria-pressed={fire.preset === p.id}
+                  style={{ background: `linear-gradient(90deg, ${p.palette.slice(1).join(',')})` }}
+                  onClick={() => store.set({ fire: { ...fire, preset: p.id } })}
+                />
+              ))}
+            </div>
+            <div className="opt-slider">
+              <Slider label="Flame height" value={fire.height} min={40} max={2000} unit="px" onChange={(v) => store.set({ fire: { ...fire, height: v } })} />
+            </div>
+            <div className="opt-slider">
+              <Slider label="Thickness" value={fire.width} min={8} max={300} unit="px" onChange={(v) => store.set({ fire: { ...fire, width: v } })} />
+            </div>
+            <div className="opt-slider">
+              <Slider label="Wildness" value={fire.wild} min={0} max={100} unit="%" onChange={(v) => store.set({ fire: { ...fire, wild: v } })} />
             </div>
           </>
         )}

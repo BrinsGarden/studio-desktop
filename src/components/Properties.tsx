@@ -13,6 +13,7 @@ import {
   type FillProps,
   type SwirlProps,
   SWIRL_PRESETS,
+  FIRE_PRESETS,
 } from '../engine/types';
 import { ColorField, Section, Segmented, Select, Slider } from './ui';
 import { CurvesEditor } from './CurvesEditor';
@@ -81,7 +82,7 @@ export default function Properties() {
 
 function kindLabel(l: Layer) {
   if (l.kind === 'fill' && l.fill?.type === 'fog') return 'Fog';
-  return { image: 'Image', text: 'Text', fill: 'Gradient / Fill', adjust: 'Adjustment', swirl: 'Magic swirl' }[l.kind];
+  return { image: 'Image', text: 'Text', fill: 'Gradient / Fill', adjust: 'Adjustment', swirl: l.swirl?.style === 'fire' ? 'Hellfire' : 'Magic swirl' }[l.kind];
 }
 
 function up(layer: Layer, label: string, fn: (l: Layer) => void) {
@@ -96,7 +97,8 @@ function LayerTab({ layer }: { layer: Layer }) {
     <>
       {layer.kind === 'text' && layer.text && <TextSection layer={layer} t={layer.text} />}
       {layer.kind === 'fill' && layer.fill && <FillSection layer={layer} f={layer.fill} />}
-      {layer.kind === 'swirl' && layer.swirl && <SwirlSection layer={layer} s={layer.swirl} />}
+      {layer.kind === 'swirl' && layer.swirl && layer.swirl.style !== 'fire' && <SwirlSection layer={layer} s={layer.swirl} />}
+      {layer.kind === 'swirl' && layer.swirl && layer.swirl.style === 'fire' && <FireSection layer={layer} s={layer.swirl} />}
 
       <Section title="Blending">
         <Select
@@ -386,6 +388,73 @@ function SwirlSection({ layer, s }: { layer: Layer; s: SwirlProps }) {
       </div>
       <p className="hint">
         Depth fades the half of each loop that goes "behind". To wrap it around an arm, add a mask and paint out the parts that should pass behind her.
+      </p>
+    </Section>
+  );
+}
+
+function FireSection({ layer, s }: { layer: Layer; s: SwirlProps }) {
+  const set = (label: string, patch: Partial<SwirlProps>) =>
+    up(layer, label, (l) => {
+      l.swirl = { ...l.swirl!, ...patch };
+    });
+  const names = ['Dark edges', 'Deep', 'Body', 'Hot', 'Core'];
+  return (
+    <Section title="Hellfire">
+      <div className="row">
+        {FIRE_PRESETS.map((p) => (
+          <button
+            type="button"
+            key={p.id}
+            className="preset-chip"
+            title={p.label}
+            aria-label={`${p.label} colors`}
+            style={{ background: `linear-gradient(90deg, ${p.palette.slice(1).join(',')})` }}
+            onClick={() => set('Fire colors', { palette: [...p.palette] })}
+          />
+        ))}
+      </div>
+      <div className="row">
+        {s.palette.map((c, i) => (
+          <input
+            key={i}
+            type="color"
+            className="mini-color"
+            title={names[i] ?? `Color ${i + 1}`}
+            aria-label={`Fire color: ${names[i] ?? i + 1}`}
+            value={c}
+            onChange={(e) => {
+              const pal = [...s.palette];
+              pal[i] = e.target.value;
+              set('Fire colors', { palette: pal });
+            }}
+          />
+        ))}
+      </div>
+      <Slider label="Flame height" value={s.amplitude} min={40} max={2000} unit="px" onChange={(v) => set('Flame height', { amplitude: v })} />
+      <Slider label="Thickness" value={s.width} min={8} max={300} unit="px" onChange={(v) => set('Thickness', { width: v })} />
+      <Slider label="Wildness" value={s.wraps} min={0} max={100} unit="%" onChange={(v) => set('Wildness', { wraps: v })} />
+      <Slider label="Density" value={s.strands} min={1} max={10} onChange={(v) => set('Density', { strands: v })} />
+      <Slider label="Glow" value={s.glow} min={0} max={200} unit="px" onChange={(v) => set('Glow', { glow: v })} />
+      <Slider label="Embers" value={s.sparkles} min={0} max={400} onChange={(v) => set('Embers', { sparkles: v })} />
+      <Slider label="Fade ends" value={Math.round(s.taper * 100)} min={0} max={50} unit="%" onChange={(v) => set('Fade ends', { taper: v / 100 })} />
+      <div className="row">
+        <button type="button" className="btn small" onClick={() => set('New flame shapes', { seed: Math.floor(Math.random() * 1e9) })}>
+          New flame shapes
+        </button>
+        <button
+          type="button"
+          className="btn small"
+          onClick={() => {
+            store.set({ tool: 'fire', swirlRedrawId: layer.id });
+            store.toast('Draw the new fire line on the canvas');
+          }}
+        >
+          Redraw line
+        </button>
+      </div>
+      <p className="hint">
+        Flames always rise toward the top of the layer. Flip V makes them hang down. Set the blend mode to Screen to make the fire glow over the scene. To put a person in front of the fire, move the fire layer below them.
       </p>
     </Section>
   );

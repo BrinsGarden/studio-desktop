@@ -98,8 +98,18 @@ export interface SwirlProps {
   taper: number;
   seed: number;
   /** 'helix' = twisting ribbons; 'trail' = soft fanned energy streaks */
-  style?: 'helix' | 'trail';
+  style?: 'helix' | 'trail' | 'fire';
 }
+
+/** Fire color ramps: dark licking edge → deep → body → hot → core. */
+export const FIRE_PRESETS: { id: string; label: string; palette: string[] }[] = [
+  { id: 'hell', label: 'Hellfire', palette: ['#1a0000', '#8f0a00', '#ff3c00', '#ffa020', '#fff1b8'] },
+  { id: 'blood', label: 'Blood fire', palette: ['#120000', '#5c0000', '#c40000', '#ff3a1a', '#ffc2a0'] },
+  { id: 'inferno', label: 'Inferno', palette: ['#200400', '#b32400', '#ff6a00', '#ffd23f', '#ffffff'] },
+  { id: 'soul', label: 'Soul fire', palette: ['#000a1a', '#0a2f8f', '#1f8bff', '#7ae0ff', '#ffffff'] },
+  { id: 'witch', label: 'Witch fire', palette: ['#0d001a', '#4a0a8f', '#a23bff', '#39ff88', '#eaffd8'] },
+  { id: 'toxic', label: 'Toxic fire', palette: ['#001200', '#0a6a00', '#39ff14', '#d6ff3b', '#ffffe0'] },
+];
 
 export const SWIRL_PRESETS: { id: string; label: string; palette: string[] }[] = [
   { id: 'witchy', label: 'Witchy', palette: ['#b04cff', '#ff3df2', '#39ff88'] },

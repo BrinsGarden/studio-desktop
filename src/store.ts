@@ -3,7 +3,14 @@ import type { Doc, Layer } from './engine/types';
 import { applyPatch, type PixelPatch } from './engine/brush';
 import type { SelectMode, Selection } from './engine/selection';
 
-export type Tool = 'move' | 'select' | 'brush' | 'eraser' | 'swirl' | 'eyedropper' | 'hand';
+export type Tool = 'move' | 'select' | 'brush' | 'eraser' | 'swirl' | 'fire' | 'eyedropper' | 'hand';
+
+export interface FireDefaults {
+  preset: string;
+  height: number;
+  width: number;
+  wild: number;
+}
 
 export interface SwirlDefaults {
   preset: string;
@@ -35,6 +42,7 @@ export interface AppState {
   selectMode: SelectMode;
   feather: number;
   swirl: SwirlDefaults;
+  fire: FireDefaults;
   /** When set, the next swirl drawn replaces this swirl layer's path. */
   swirlRedrawId: string | null;
   previewHQ: boolean;
@@ -86,6 +94,7 @@ class Store {
     feather: 0,
     swirl: { preset: 'witchy', width: 14, amplitude: 40, strands: 4, style: 'trail' },
     swirlRedrawId: null,
+    fire: { preset: 'hell', height: 420, width: 70, wild: 45 },
     previewHQ: false,
     showMask: false,
     rev: 0,

@@ -1,6 +1,7 @@
 import { store } from './store';
 import {
   SWIRL_PRESETS,
+  FIRE_PRESETS,
   createCanvas,
   defaultFill,
   defaultText,
@@ -471,6 +472,33 @@ export function createSwirl(pts: Pt[]) {
       l.y = c.y;
     }, 'Redraw swirl', `swirl${Date.now()}`);
     store.set({ swirlRedrawId: null });
+    return;
+  }
+  if (store.state.tool === 'fire') {
+    const f = store.state.fire;
+    const { center, points } = centerPath(pts);
+    const layer = makeLayer('swirl', 'Hellfire', {
+      x: center.x,
+      y: center.y,
+      swirl: {
+        points,
+        palette: [...(FIRE_PRESETS.find((p) => p.id === f.preset) ?? FIRE_PRESETS[0]).palette],
+        style: 'fire',
+        amplitude: f.height,
+        width: f.width,
+        wraps: f.wild,
+        strands: 4,
+        glow: Math.round(f.width * 0.8),
+        sparkles: 40,
+        depth: 0,
+        taper: 0.15,
+        seed: Math.floor(Math.random() * 1e9),
+      },
+    });
+    store.mutate('Add fire', (dd) => {
+      insertAboveSelected(dd, layer);
+      return layer.id;
+    });
     return;
   }
   const d = store.state.swirl;
