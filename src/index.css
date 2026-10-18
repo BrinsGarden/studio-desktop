@@ -887,3 +887,40 @@ kbd {
   width: 28px;
   height: 28px;
 }
+
+/* Long layer names (e.g. upscaled file names) must never widen the sidebar. */
+.sidebar > *,
+.props,
+.props-scroll,
+.section,
+.section-body {
+  min-width: 0;
+  max-width: 100%;
+}
+.props-scroll {
+  overflow-x: hidden;
+}
+.sidebar select,
+.sidebar input:not([type='checkbox']):not([type='radio']),
+.sidebar textarea {
+  min-width: 0;
+  max-width: 100%;
+}
+.sidebar select {
+  text-overflow: ellipsis;
+}
+.field > *,
+.slider > *,
+.color-field > *,
+.row > * {
+  min-width: 0;
+}
+.field {
+  grid-template-columns: 92px minmax(0, 1fr);
+}
+.slider {
+  grid-template-columns: 92px minmax(0, 1fr) 66px;
+}
+.row {
+  flex-wrap: wrap;
+}
