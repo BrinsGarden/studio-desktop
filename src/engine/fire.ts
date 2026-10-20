@@ -101,10 +101,12 @@ export function renderFire(p: SwirlProps): HTMLCanvasElement {
     }
     const g = hc.createLinearGradient(0, by + w * 0.2, 0, by - h);
     const k = strength * heatScale;
+    // cool red edge at the very base, hottest a little way up, fading toward the tips
     g.addColorStop(0, 'rgba(255,255,255,0)');
-    g.addColorStop(0.07, `rgba(255,255,255,${0.9 * k})`);
-    g.addColorStop(0.3, `rgba(255,255,255,${0.7 * k})`);
-    g.addColorStop(0.7, `rgba(255,255,255,${0.3 * k})`);
+    g.addColorStop(0.06, `rgba(255,255,255,${0.3 * k})`);
+    g.addColorStop(0.22, `rgba(255,255,255,${0.9 * k})`);
+    g.addColorStop(0.45, `rgba(255,255,255,${0.65 * k})`);
+    g.addColorStop(0.8, `rgba(255,255,255,${0.22 * k})`);
     g.addColorStop(1, 'rgba(255,255,255,0)');
     hc.fillStyle = g;
     hc.beginPath();
@@ -177,12 +179,13 @@ export function renderFire(p: SwirlProps): HTMLCanvasElement {
 
   const oc = out.getContext('2d')!;
   if (p.glow > 0) {
+    // lift the glow a little so it hugs the flames instead of hazing the ground below
     oc.filter = `blur(${p.glow}px)`;
     oc.globalAlpha = 0.9;
-    oc.drawImage(flames, 0, 0);
+    oc.drawImage(flames, 0, -p.glow * 0.6);
     oc.filter = `blur(${p.glow / 3}px)`;
     oc.globalAlpha = 0.6;
-    oc.drawImage(flames, 0, 0);
+    oc.drawImage(flames, 0, -p.glow * 0.2);
     oc.filter = 'none';
     oc.globalAlpha = 1;
   }
