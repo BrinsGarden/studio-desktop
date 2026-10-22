@@ -1,4 +1,4 @@
-import { applyAdjustments, computeStats, isIdentity, keyOutColor, processEdges, hexToRgb, type ChannelStats } from './adjust';
+import { applyAdjustments, computeStats, despill, isIdentity, keyOutColor, processEdges, hexToRgb, type ChannelStats } from './adjust';
 import { createCanvas, type Doc, type Layer, type TextProps, type FillProps } from './types';
 import { renderSwirl } from './swirl';
 import { renderFire } from './fire';
@@ -224,7 +224,10 @@ export function hitTest(layer: Layer, doc: Doc, x: number, y: number): boolean {
   const p = docToLocal(layer, doc, x, y);
   if (p.x < 0 || p.y < 0 || p.x >= src.width || p.y >= src.height) return false;
   const px = src.getContext('2d')!.getImageData(Math.floor(p.x), Math.floor(p.y), 1, 1).data;
-  if (layer.fx.key?.enabled) keyOutColor(px, hexToRgb(layer.fx.key.color), layer.fx.key.tolerance, layer.fx.key.softness);
+  if (layer.fx.key?.enabled) {
+    keyOutColor(px, hexToRgb(layer.fx.key.color), layer.fx.key.tolerance, layer.fx.key.softness);
+    despill(px, hexToRgb(layer.fx.key.color), layer.fx.key.despill ?? 0);
+  }
   if (px[3] < 20) return false;
   if (layer.mask && layer.maskEnabled) {
     const m = layer.mask.getContext('2d')!.getImageData(Math.floor(p.x), Math.floor(p.y), 1, 1).data[3];
@@ -289,6 +292,7 @@ function adjustedSource(layer: Layer, doc: Doc, f: number): HTMLCanvasElement | 
   const img = ctx.getImageData(0, 0, w, h);
   if (layer.fx.key?.enabled) {
     keyOutColor(img.data, hexToRgb(layer.fx.key.color), layer.fx.key.tolerance, layer.fx.key.softness);
+    despill(img.data, hexToRgb(layer.fx.key.color), layer.fx.key.despill ?? 0);
   }
   if (!isIdentity(layer.adj)) applyAdjustments(img.data, layer.adj, sStats, tStats);
   if (layer.fx.shrinkEdge > 0 || layer.fx.softenEdge > 0) {

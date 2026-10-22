@@ -301,6 +301,16 @@ function KeySection({ layer }: { layer: Layer }) {
       </div>
       <Slider label="Tolerance" value={key.tolerance} min={0} max={60} unit="%" defaultValue={12} onChange={(v) => set((k) => { k.tolerance = v; k.enabled = true; })} />
       <Slider label="Softness" value={key.softness} min={0} max={40} unit="%" defaultValue={8} onChange={(v) => set((k) => { k.softness = v; k.enabled = true; })} />
+      <Slider
+        label="Remove green spill"
+        value={key.despill ?? 0}
+        min={0}
+        max={100}
+        unit="%"
+        defaultValue={0}
+        onChange={(v) => set((k) => { k.despill = v; k.enabled = true; })}
+      />
+      <p className="hint">For green or blue screens: clears green tint off shiny edges and leftover pockets of green.</p>
     </Section>
   );
 }

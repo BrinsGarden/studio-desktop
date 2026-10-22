@@ -363,3 +363,34 @@ export function keyOutColor(data: Uint8ClampedArray, color: [number, number, num
     data[i + 3] = Math.round(data[i + 3] * keep);
   }
 }
+
+/**
+ * Remove color spill left by a green or blue screen. Wherever the screen's channel is
+ * stronger than the other two, it's pulled back down (green-tinted gold goes back to gold),
+ * and pixels that are mostly screen color (shaded pockets the key missed) fade out.
+ * `strength` 0–100. No-op for keys that aren't clearly green or blue. In place.
+ */
+export function despill(data: Uint8ClampedArray, color: [number, number, number], strength: number): void {
+  if (strength <= 0) return;
+  const [kr, kg, kb] = color;
+  const ch = kg > kr + 40 && kg > kb + 40 ? 1 : kb > kr + 40 && kb > kg + 40 ? 2 : -1;
+  if (ch < 0) return;
+  const s = Math.min(1, strength / 100);
+  const hi = 0.75 - 0.4 * s; // spill ratio where a pixel becomes fully transparent
+  const lo = hi - 0.2;
+  for (let i = 0; i < data.length; i += 4) {
+    if (data[i + 3] === 0) continue;
+    const c = data[i + ch];
+    const o1 = data[i];
+    const o2 = data[i + (ch === 1 ? 2 : 1)];
+    const limit = Math.max(o1, o2);
+    const spill = c - limit;
+    if (spill <= 0) continue;
+    const ratio = spill / Math.max(c, 1);
+    if (ratio >= lo) {
+      const keep = ratio >= hi ? 0 : (hi - ratio) / (hi - lo);
+      data[i + 3] = Math.round(data[i + 3] * keep);
+    }
+    data[i + ch] = Math.round(c - spill * s);
+  }
+}

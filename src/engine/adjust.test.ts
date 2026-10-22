@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyAdjustments, buildChannelLuts, computeStats, curveLut, isIdentity, keyOutColor, processEdges } from './adjust';
+import { applyAdjustments, buildChannelLuts, computeStats, curveLut, despill, isIdentity, keyOutColor, processEdges } from './adjust';
 import { defaultAdjustments } from './types';
 import { crc32, setPngDpi, setJpegDpi } from './io';
 
@@ -139,5 +139,22 @@ describe('remove background color', () => {
     expect(d[7]).toBe(255);
     expect(d[11]).toBeGreaterThan(0);
     expect(d[11]).toBeLessThan(255);
+  });
+});
+
+describe('despill', () => {
+  it('clears green pockets, de-tints gold, leaves gold and red alone', () => {
+    const d = px(20, 90, 20, 255, 150, 165, 60, 255, 180, 140, 50, 255, 120, 20, 30, 255);
+    despill(d, [0, 255, 0], 100);
+    expect(d[3]).toBe(0); // shaded green pocket gone
+    expect(d[5]).toBe(150); // tinted gold: green pulled down to red
+    expect(d[7]).toBe(255);
+    expect([d[8], d[9], d[10], d[11]]).toEqual([180, 140, 50, 255]); // gold untouched
+    expect([d[12], d[13], d[14], d[15]]).toEqual([120, 20, 30, 255]); // red untouched
+  });
+  it('does nothing for a black key', () => {
+    const d = px(20, 90, 20, 255);
+    despill(d, [0, 0, 0], 100);
+    expect([...d]).toEqual([20, 90, 20, 255]);
   });
 });

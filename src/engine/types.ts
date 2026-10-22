@@ -72,7 +72,7 @@ export interface Adjustments {
 export interface Effects {
   blur: number;
   /** Make one background color transparent (e.g. a cutout shot on black). */
-  key: { enabled: boolean; color: string; tolerance: number; softness: number };
+  key: { enabled: boolean; color: string; tolerance: number; softness: number; despill?: number };
   shrinkEdge: number;
   softenEdge: number;
   shadow: { enabled: boolean; color: string; opacity: number; angle: number; distance: number; size: number };
@@ -218,7 +218,7 @@ export function defaultAdjustments(): Adjustments {
 export function defaultEffects(): Effects {
   return {
     blur: 0,
-    key: { enabled: false, color: '#000000', tolerance: 12, softness: 8 },
+    key: { enabled: false, color: '#000000', tolerance: 12, softness: 8, despill: 0 },
     shrinkEdge: 0,
     softenEdge: 0,
     shadow: { enabled: false, color: '#000000', opacity: 0.6, angle: 120, distance: 12, size: 24 },
