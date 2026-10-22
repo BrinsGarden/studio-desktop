@@ -273,6 +273,7 @@ export const FONTS = [
   'UnifrakturMaguntia',
   'Pirata One',
   'Jolly Lodger',
+  'Rye',
   'Germania One',
   'Black Ops One',
   'Cinzel Decorative',
