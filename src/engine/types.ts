@@ -132,6 +132,12 @@ export interface TextProps {
   fillType: 'solid' | 'gradient';
   color: string;
   color2: string;
+  /** Optional middle gradient color; position 0..100 along the gradient. */
+  midColor?: string;
+  midEnabled?: boolean;
+  midPos?: number;
+  /** 0..100 — how hard the blend is around the middle color (0 = smooth, 100 = sharp switch). */
+  midSharp?: number;
   gradientDir: 'horizontal' | 'vertical';
   strokeColor: string;
   strokeWidth: number;

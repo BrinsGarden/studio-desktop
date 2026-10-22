@@ -538,12 +538,27 @@ function TextSection({ layer, t }: { layer: Layer; t: TextProps }) {
         onChange={(v) => set('Text fill', { fillType: v })}
         options={[
           { value: 'solid', label: 'Solid color' },
-          { value: 'gradient', label: 'Two-color gradient' },
+          { value: 'gradient', label: 'Gradient' },
         ]}
       />
       <ColorField label={t.fillType === 'gradient' ? 'Start color' : 'Color'} value={t.color} onChange={(v) => set('Text color', { color: v })} />
       {t.fillType === 'gradient' && (
         <>
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={!!t.midEnabled}
+              onChange={(e) => set('Middle color', { midEnabled: e.target.checked, midColor: t.midColor ?? '#6a2a7a' })}
+            />
+            Middle color
+          </label>
+          {t.midEnabled && (
+            <>
+              <ColorField label="Middle color" value={t.midColor ?? '#6a2a7a'} onChange={(v) => set('Text color', { midColor: v })} />
+              <Slider label="Middle position" value={t.midPos ?? 50} min={2} max={98} unit="%" defaultValue={50} onChange={(v) => set('Middle position', { midPos: v })} />
+              <Slider label="Blend sharpness" value={t.midSharp ?? 0} min={0} max={100} unit="%" defaultValue={0} onChange={(v) => set('Blend sharpness', { midSharp: v })} />
+            </>
+          )}
           <ColorField label="End color" value={t.color2} onChange={(v) => set('Text color', { color2: v })} />
           <Segmented
             label="Gradient direction"

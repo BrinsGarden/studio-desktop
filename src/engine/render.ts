@@ -85,6 +85,17 @@ function renderText(t: TextProps): HTMLCanvasElement {
         ? ctx.createLinearGradient(pad, 0, w - pad, 0)
         : ctx.createLinearGradient(0, pad, 0, h - pad);
     g.addColorStop(0, t.color);
+    if (t.midEnabled && t.midColor) {
+      const m = Math.min(0.98, Math.max(0.02, (t.midPos ?? 50) / 100));
+      const half = (1 - Math.min(100, Math.max(0, t.midSharp ?? 0)) / 100) * Math.min(m, 1 - m) * 0.9;
+      if (half > 0.001) {
+        g.addColorStop(Math.max(0, m - half), t.color);
+        g.addColorStop(m, t.midColor);
+        g.addColorStop(Math.min(1, m + half), t.color2);
+      } else {
+        g.addColorStop(m, t.midColor);
+      }
+    }
     g.addColorStop(1, t.color2);
     fill = g;
   }
