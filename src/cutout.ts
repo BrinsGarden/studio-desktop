@@ -96,6 +96,17 @@ function getWorker(): Worker {
   return worker;
 }
 
+export function cutoutOnCpu(q: Quality): boolean {
+  return cpuOnly.includes(q);
+}
+
+/** Manually move a model to the CPU (when the graphics card gives bad results without an error). */
+export function cutoutUseCpu(q: Quality) {
+  handleGpuFail(`${GPU_FAIL}${q}:manual`);
+  store.toast('Cutout will use the CPU on this computer — slower, but reliable. Run the cutout again.');
+  setCut({ device: store.state.cutout.device });
+}
+
 /** A model failed on the GPU: remember it, restart the worker (its AI runtime is stuck after a GPU error) and re-send the photo. */
 function handleGpuFail(message: string) {
   const key = message.slice(GPU_FAIL.length).split(':')[0];

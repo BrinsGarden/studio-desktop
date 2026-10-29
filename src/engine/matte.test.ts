@@ -201,3 +201,20 @@ describe('solid inside', () => {
     expect(solidIn(a, w, h, 0)).toBe(a);
   });
 });
+
+import { matteLooksValid } from './matte';
+describe('matte sanity check', () => {
+  it('accepts a solid subject and rejects noise or empty output', () => {
+    const w = 128;
+    const h = 128;
+    const good = new Float32Array(w * h);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) good[y * w + x] = Math.hypot(x - 64, y - 64) < 40 ? 1 : 0;
+    expect(matteLooksValid(good, w, h)).toBe(true);
+    let seed = 3;
+    const noise = new Float32Array(w * h).map(() => ((seed = (seed * 16807) % 2147483647) / 2147483647));
+    expect(matteLooksValid(noise, w, h)).toBe(false);
+    const empty = new Float32Array(w * h);
+    for (let i = 0; i < 40; i++) empty[i * 97] = 1;
+    expect(matteLooksValid(empty, w, h)).toBe(false);
+  });
+});

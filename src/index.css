@@ -1134,3 +1134,10 @@ kbd {
   justify-content: flex-end;
   gap: 8px;
 }
+.chip-btn {
+  cursor: pointer;
+  font: inherit;
+}
+.chip-btn:hover {
+  filter: brightness(1.2);
+}

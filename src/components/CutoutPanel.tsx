@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { store, useStore } from '../store';
-import { cutoutApply, cutoutCancel, cutoutSubject, cutoutTooBig, setCutoutEdges } from '../cutout';
+import { cutoutApply, cutoutCancel, cutoutOnCpu, cutoutUseCpu, cutoutSubject, cutoutTooBig, setCutoutEdges } from '../cutout';
 import { Slider } from './ui';
 import { Icon } from './icons';
 
@@ -20,7 +20,14 @@ export default function CutoutPanel() {
       <div className="cutout-head">
         <strong>Cutout</strong>
         <span className="muted">{layer ? layer.name : 'No layer'}</span>
-        {cut.device && <span className={`chip ${cut.device === 'webgpu' ? 'ok' : ''}`}>{cut.device === 'webgpu' ? 'GPU' : 'CPU'}</span>}
+        {cut.device &&
+          (cut.device === 'webgpu' && !cutoutOnCpu(cut.quality) ? (
+            <button type="button" className="chip ok chip-btn" disabled={working} title="Running on the graphics card. If cutouts come out wrong or empty, click to use the CPU instead (slower, but reliable)." onClick={() => cutoutUseCpu(cut.quality)}>
+              GPU
+            </button>
+          ) : (
+            <span className="chip" title="Running on the CPU">CPU</span>
+          ))}
         <button type="button" className="icon-btn" aria-expanded={!collapsed} aria-label={collapsed ? 'Show cutout panel' : 'Hide cutout panel'} onClick={() => setCollapsed(!collapsed)}>
           <Icon name={collapsed ? 'up' : 'down'} size={14} />
         </button>

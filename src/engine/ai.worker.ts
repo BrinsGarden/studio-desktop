@@ -14,6 +14,7 @@ import {
   fillHoles,
   floatToHalf,
   halfToFloat,
+  matteLooksValid,
   morph,
   planesFromRGBA,
   removeSpecks,
@@ -320,6 +321,8 @@ async function matteRect(id: number, q: Quality, roi: Rect): Promise<{ coarse: F
       }
     }
     if (spec.norm === 'half' && mx > mn) for (let i = 0; i < data.length; i++) data[i] = (data[i] - mn) / (mx - mn);
+    // some graphics cards return noise instead of an error; treat that as a GPU failure so it reruns on the CPU
+    if (onGpu && !matteLooksValid(data, cw, ch)) throw new Error('degenerate GPU output');
     return { coarse: data, cw, ch };
   };
 

@@ -691,3 +691,29 @@ export function fillHoles(bin: Float32Array, w: number, h: number): Float32Array
   for (let i = 0; i < n; i++) out[i] = outside[i] ? 0 : 1;
   return out;
 }
+
+/**
+ * Does this low-res matte look like a real cutout? Broken GPU runs return noise or near-empty
+ * results instead of failing. A real matte is mostly solid: most foreground pixels have
+ * foreground neighbours, and few pixels sit in the uncertain middle.
+ */
+export function matteLooksValid(a: Float32Array, w: number, h: number): boolean {
+  let fg = 0;
+  let interior = 0;
+  let mid = 0;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      const v = a[i];
+      if (v > 0.15 && v < 0.85) mid++;
+      if (v <= 0.5) continue;
+      fg++;
+      if (x > 0 && x < w - 1 && y > 0 && y < h - 1 && a[i - 1] > 0.5 && a[i + 1] > 0.5 && a[i - w] > 0.5 && a[i + w] > 0.5) interior++;
+    }
+  }
+  const n = w * h;
+  if (fg < n * 0.01) return false;
+  if (interior < fg * 0.6) return false;
+  if (mid > n * 0.5) return false;
+  return true;
+}
