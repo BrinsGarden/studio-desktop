@@ -200,16 +200,36 @@ async function runSam(id: number, points: PickPoint[]) {
   const masks = await sam!.processor.post_process_masks(out.pred_masks, e.inputs.original_sizes, e.inputs.reshaped_input_sizes, { binarize: false });
   const m = masks[0];
   const scores: Float32Array = out.iou_scores.data;
-  let best = 0;
-  for (let i = 1; i < scores.length; i++) if (scores[i] > scores[best]) best = i;
   const [, , mh, mw] = m.dims as number[];
   const plane = mh * mw;
   const src = m.data as Float32Array | Uint8Array;
+  const isBoolMask = !(src instanceof Float32Array);
+  let best = 0;
+  for (let i = 1; i < scores.length; i++) if (scores[i] > scores[best]) best = i;
+  // SAM offers part / sub-part / whole-object masks. A plain click on a person usually means the
+  // whole person, so take the biggest confident mask unless the user is excluding things.
+  if (points.every((p) => p.label === 1)) {
+    const area = (k: number) => {
+      let n = 0;
+      for (let i = 0; i < plane; i++) if ((src[k * plane + i] as number) > 0) n++;
+      return n;
+    };
+    let pick = best;
+    let pickArea = area(best);
+    for (let k = 0; k < scores.length; k++) {
+      if (k === best || scores[k] < scores[best] * 0.8) continue;
+      const a = area(k);
+      if (a > pickArea && a < plane * 0.85) {
+        pick = k;
+        pickArea = a;
+      }
+    }
+    best = pick;
+  }
   const soft = new Float32Array(plane);
-  const isBool = !(src instanceof Float32Array);
   for (let i = 0; i < plane; i++) {
     const v = src[best * plane + i] as number;
-    soft[i] = isBool ? (v ? 1 : 0) : 1 / (1 + Math.exp(-v));
+    soft[i] = isBoolMask ? (v ? 1 : 0) : 1 / (1 + Math.exp(-v));
   }
   return { soft, w: mw, h: mh, scale: e.scale };
 }
