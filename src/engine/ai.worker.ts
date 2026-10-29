@@ -108,9 +108,12 @@ async function detectDevice(): Promise<'webgpu' | 'wasm'> {
   return device;
 }
 
-function loadMatte(id: number, q: Quality, dtypeOverride?: string): Promise<AnyModel> {
+/** Models whose GPU run failed on this machine; they run on the CPU from then on. */
+const cpuOnly = new Set<Quality>();
+
+function loadMatte(id: number, q: Quality, dtypeOverride?: string, devOverride?: 'webgpu' | 'wasm'): Promise<AnyModel> {
   const spec = MATTE[q];
-  const dev = device!;
+  const dev = devOverride ?? (cpuOnly.has(q) ? 'wasm' : device!);
   const dtype = dtypeOverride ?? (dev === 'webgpu' ? (gpuF16 ? spec.gpu : 'fp32') : spec.cpu);
   if (!dtype) throw new Error('Max quality needs a graphics card with WebGPU. Use Best instead.');
   const key = `${q}|${dev}|${dtype}`;
@@ -230,7 +233,8 @@ async function matteRect(id: number, q: Quality, roi: Rect): Promise<{ coarse: F
   await detectDevice();
   post({ type: 'device', id, device: device! });
   let model = await loadMatte(id, q);
-  post({ type: 'progress', id, text: device === 'webgpu' ? 'Cutting out (GPU)…' : 'Cutting out (CPU — this can take a minute)…', progress: null });
+  const onGpu = device === 'webgpu' && !cpuOnly.has(q);
+  post({ type: 'progress', id, text: onGpu ? 'Cutting out (GPU)…' : 'Cutting out (CPU — this can take a minute)…', progress: null });
   const S = 1024;
   const oc = new OffscreenCanvas(S, S);
   const ctx = oc.getContext('2d')!;
@@ -292,15 +296,31 @@ async function matteRect(id: number, q: Quality, roi: Rect): Promise<{ coarse: F
     return { coarse: data, cw, ch };
   };
 
+  const runOnCpu = async () => {
+    if (!MATTE[q].cpu) throw new Error("Your graphics card can't run Max quality. Use Best instead.");
+    cpuOnly.add(q);
+    post({ type: 'device', id, device: 'wasm' });
+    post({ type: 'progress', id, text: "Your graphics card can't run this model — using the CPU instead (slower)…", progress: null });
+    const m = await loadMatte(id, q, undefined, 'wasm');
+    post({ type: 'progress', id, text: 'Cutting out (CPU — this can take a minute)…', progress: null });
+    return run(m);
+  };
   let res: { coarse: Float32Array; cw: number; ch: number };
   try {
     res = await run(model);
   } catch (err) {
     // half-precision models occasionally produce garbage on some GPUs — retry in full precision
-    if (device === 'webgpu' && /degenerate|fp16|float16/i.test(String(err))) {
+    if (onGpu && /degenerate|fp16|float16/i.test(String(err))) {
       post({ type: 'progress', id, text: 'Retrying in full precision…', progress: null });
       model = await loadMatte(id, q, 'fp32');
-      res = await run(model);
+      try {
+        res = await run(model);
+      } catch {
+        res = await runOnCpu();
+      }
+    } else if (onGpu) {
+      // some graphics chips can't run every layer of the model — the CPU always can
+      res = await runOnCpu();
     } else throw err;
   }
   lastMatte = { key, roi, ...res };
