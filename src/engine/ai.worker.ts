@@ -5,7 +5,7 @@
  * and are cached by the browser.
  */
 import { AutoModel, AutoProcessor, RawImage, SamModel, Tensor, env } from '@huggingface/transformers';
-import type { FromWorker, PickPoint, Quality, ToWorker } from './aiProtocol';
+import { GPU_FAIL, type FromWorker, type PickPoint, type Quality, type ToWorker } from './aiProtocol';
 import { adjustEdges, refineMatte, upsampleMatte, type EdgeSettings } from './cutoutPipeline';
 import {
   boxBlur,
@@ -109,7 +109,7 @@ async function detectDevice(): Promise<'webgpu' | 'wasm'> {
 }
 
 /** Models whose GPU run failed on this machine; they run on the CPU from then on. */
-const cpuOnly = new Set<Quality>();
+const cpuOnly = new Set<string>();
 
 function loadMatte(id: number, q: Quality, dtypeOverride?: string, devOverride?: 'webgpu' | 'wasm'): Promise<AnyModel> {
   const spec = MATTE[q];
@@ -136,7 +136,7 @@ async function ensureSam(id: number) {
   if (sam) return;
   if (!samLoading) {
     samLoading = (async () => {
-      const dev = await detectDevice();
+      const dev = cpuOnly.has('sam') ? 'wasm' : await detectDevice();
       const progress_callback = progressReporter(id, 'object finder');
       const model = await SamModel.from_pretrained(SAM_ID, {
         device: dev === 'webgpu' ? ({ vision_encoder: 'webgpu', prompt_encoder_mask_decoder: 'wasm' } as any) : 'wasm',
@@ -174,7 +174,13 @@ async function ensureSamEmbeddings(id: number) {
   }
   const raw = new RawImage(rgb, sw, sh, 3);
   const inputs = await sam!.processor(raw);
-  const emb = await sam!.model.get_image_embeddings(inputs);
+  let emb: AnyModel;
+  try {
+    emb = await sam!.model.get_image_embeddings(inputs);
+  } catch (err) {
+    if (device === 'webgpu' && !cpuOnly.has('sam')) throw new Error(`${GPU_FAIL}sam:${String(err).slice(0, 200)}`);
+    throw err;
+  }
   samEmb = { imageId: img.id, inputs, emb, sw, sh, scale };
   return samEmb;
 }
@@ -296,31 +302,26 @@ async function matteRect(id: number, q: Quality, roi: Rect): Promise<{ coarse: F
     return { coarse: data, cw, ch };
   };
 
-  const runOnCpu = async () => {
-    if (!MATTE[q].cpu) throw new Error("Your graphics card can't run Max quality. Use Best instead.");
-    cpuOnly.add(q);
-    post({ type: 'device', id, device: 'wasm' });
-    post({ type: 'progress', id, text: "Your graphics card can't run this model — using the CPU instead (slower)…", progress: null });
-    const m = await loadMatte(id, q, undefined, 'wasm');
-    post({ type: 'progress', id, text: 'Cutting out (CPU — this can take a minute)…', progress: null });
-    return run(m);
-  };
+  // A failed GPU run leaves the AI library unable to run anything else in this worker,
+  // so report it and let the page restart the worker with this model on the CPU.
+  const gpuFail = (err: unknown): Error =>
+    MATTE[q].cpu ? new Error(`${GPU_FAIL}${q}:${String(err).slice(0, 200)}`) : new Error("Your graphics card can't run Max quality. Use Best instead.");
   let res: { coarse: Float32Array; cw: number; ch: number };
   try {
     res = await run(model);
   } catch (err) {
     // half-precision models occasionally produce garbage on some GPUs — retry in full precision
-    if (onGpu && /degenerate|fp16|float16/i.test(String(err))) {
+    if (onGpu && String(err).includes('degenerate')) {
+      // half-precision produced garbage (the run itself succeeded) — retry in full precision
       post({ type: 'progress', id, text: 'Retrying in full precision…', progress: null });
       model = await loadMatte(id, q, 'fp32');
       try {
         res = await run(model);
-      } catch {
-        res = await runOnCpu();
+      } catch (e2) {
+        throw gpuFail(e2);
       }
     } else if (onGpu) {
-      // some graphics chips can't run every layer of the model — the CPU always can
-      res = await runOnCpu();
+      throw gpuFail(err);
     } else throw err;
   }
   lastMatte = { key, roi, ...res };
@@ -404,6 +405,7 @@ async function handle(m: ToWorker) {
       env.allowLocalModels = false;
       env.useBrowserCache = true;
       if (m.remoteHost) env.remoteHost = m.remoteHost;
+      m.cpuOnly.forEach((q) => cpuOnly.add(q));
       const onnx = env.backends.onnx as any;
       if (onnx?.wasm) {
         onnx.wasm.wasmPaths = {
@@ -540,6 +542,7 @@ scope.onmessage = (e) => {
 };
 
 function friendly(msg: string): string {
+  if (msg.startsWith(GPU_FAIL)) return msg;
   if (/fetch|network|Failed to load|404|ERR_/i.test(msg)) return `Couldn't download the AI model. Check your internet connection and try again. (${msg.slice(0, 120)})`;
   if (/memory|allocation|OOM/i.test(msg)) return 'Ran out of memory. Try Fast quality, or drag a box around just the person.';
   return msg;

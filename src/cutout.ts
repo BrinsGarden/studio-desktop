@@ -6,7 +6,7 @@ import { store, DEFAULT_CUTOUT, type CutoutState } from './store';
 import { createCanvas, newId, type Layer } from './engine/types';
 import { dropCaches, previewMasks } from './engine/render';
 import { Stroke, applyPatch, type PixelPatch } from './engine/brush';
-import type { FromWorker, PickPoint, ToWorker } from './engine/aiProtocol';
+import { GPU_FAIL, type FromWorker, type PickPoint, type ToWorker } from './engine/aiProtocol';
 import type { Rect } from './engine/matte';
 
 type DistOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
@@ -42,6 +42,17 @@ interface Session {
 }
 
 let worker: Worker | null = null;
+
+/** Models that crashed on this computer's graphics card; they run on the CPU (remembered across visits). */
+const CPU_KEY = 'sd-cutout-cpu-only';
+function loadCpuOnly(): string[] {
+  try {
+    return JSON.parse(localStorage.getItem(CPU_KEY) ?? '[]');
+  } catch {
+    return [];
+  }
+}
+let cpuOnly: string[] = loadCpuOnly();
 let seq = 0;
 const pending = new Map<number, Pending>();
 let sess: Session | null = null;
@@ -66,8 +77,38 @@ function getWorker(): Worker {
     worker = null;
   };
   const params = new URLSearchParams(location.search);
-  request({ type: 'init', wasmBase: new URL('ort/', document.baseURI).href, remoteHost: params.get('hf') ?? undefined }).catch(() => {});
+  request({ type: 'init', wasmBase: new URL('ort/', document.baseURI).href, remoteHost: params.get('hf') ?? undefined, cpuOnly }).catch(() => {});
   return worker;
+}
+
+/** A model failed on the GPU: remember it, restart the worker (its AI runtime is stuck after a GPU error) and re-send the photo. */
+function handleGpuFail(message: string) {
+  const key = message.slice(GPU_FAIL.length).split(':')[0];
+  if (key && !cpuOnly.includes(key)) {
+    cpuOnly = [...cpuOnly, key];
+    try {
+      localStorage.setItem(CPU_KEY, JSON.stringify(cpuOnly));
+    } catch {
+      /* private mode — fine, it only lasts this visit */
+    }
+  }
+  worker?.terminate();
+  worker = null;
+  pending.forEach((p) => p.reject(new Error('restarted')));
+  pending.clear();
+  if (sess) sess.ready = uploadImage(sess);
+}
+
+function uploadImage(s: Session): Promise<void> {
+  const layer = store.state.doc?.layers.find((l) => l.id === s.layerId);
+  if (!layer?.canvas) return Promise.reject(new Error('The layer is gone'));
+  const src = layer.canvas;
+  const p = (async () => {
+    const bitmap = await createImageBitmap(src);
+    await request({ type: 'setImage', imageId: newId(), bitmap }, [bitmap]);
+  })();
+  p.catch(() => {});
+  return p;
 }
 
 function request(msg: Req, transfer: Transferable[] = []): Promise<FromWorker[]> {
@@ -116,7 +157,7 @@ function onWorker(m: FromWorker) {
         pending.delete(m.id);
         p.reject(new Error(m.message));
       }
-      setCut({ status: 'error', message: m.message, progress: null });
+      if (!m.message.startsWith(GPU_FAIL)) setCut({ status: 'error', message: m.message, progress: null });
       return;
   }
   p?.got.push(m);
@@ -171,12 +212,8 @@ function ensureSession(): Session | null {
     redo: [],
     imgData: null,
   };
-  s.ready = (async () => {
-    const bitmap = await createImageBitmap(src);
-    await request({ type: 'setImage', imageId: newId(), bitmap }, [bitmap]);
-  })();
-  s.ready.catch(() => {});
   sess = s;
+  s.ready = uploadImage(s);
   setCut({ layerId: layer.id, hasResult: false, points: [], status: 'idle', message: '', progress: null });
   return s;
 }
@@ -202,22 +239,33 @@ export function cutoutToolActivated() {
   if (sess && sess.layerId !== layer.id) return;
   const s = ensureSession();
   if (!s) return;
-  s.ready.then(() => request({ type: 'warmSam' })).catch(() => {});
+  s.ready
+    .then(() => request({ type: 'warmSam' }))
+    .catch((e: Error) => {
+      if (e.message.startsWith(GPU_FAIL)) handleGpuFail(e.message);
+    });
 }
 
 /* ---------------- AI picks ---------------- */
 
-async function runPick(msg: Req) {
+async function runPick(msg: Req, retried = false) {
   const s = sess;
   if (!s) return;
   setCut({ status: 'working', message: 'Getting ready…', progress: null });
   try {
     await s.ready;
+    getWorker();
     const id = seq + 1;
     latestPickId = id;
     await request(msg);
   } catch (e) {
-    setCut({ status: 'error', message: (e as Error).message, progress: null });
+    const message = (e as Error).message;
+    if (message.startsWith(GPU_FAIL) && !retried) {
+      setCut({ status: 'working', message: "Your graphics card can't run this model — switching to the CPU (slower)…", progress: null, device: 'wasm' });
+      handleGpuFail(message);
+      return runPick(msg, true);
+    }
+    setCut({ status: 'error', message: message.startsWith(GPU_FAIL) ? "The AI model couldn't run on this computer." : message, progress: null });
   }
 }
 

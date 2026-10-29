@@ -3,6 +3,9 @@ import type { Rect } from './matte';
 
 export type Quality = 'fast' | 'best' | 'max';
 
+/** Error prefix meaning "this model can't run on this graphics card": the page restarts the worker on CPU. */
+export const GPU_FAIL = 'GPU_FAIL:';
+
 export interface PickPoint {
   x: number;
   y: number;
@@ -12,7 +15,7 @@ export interface PickPoint {
 
 /** Messages from the page to the AI worker. Every request has an id; replies echo it. */
 export type ToWorker =
-  | { type: 'init'; id: number; wasmBase: string; remoteHost?: string }
+  | { type: 'init'; id: number; wasmBase: string; remoteHost?: string; cpuOnly: string[] }
   | { type: 'setImage'; id: number; imageId: string; bitmap: ImageBitmap }
   | { type: 'warmSam'; id: number }
   | { type: 'pick'; id: number; points: PickPoint[]; box: Rect | null; quality: Quality; edges: EdgeSettings }
