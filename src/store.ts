@@ -145,6 +145,12 @@ function cloneDoc(d: Doc): Doc {
 
 const MAX_HISTORY = 80;
 
+/** Counts in-place pixel edits per canvas, so autosave knows which layers need re-encoding. */
+export const pixelEdits = new WeakMap<HTMLCanvasElement, number>();
+const markEdited = (c: HTMLCanvasElement | null | undefined) => {
+  if (c) pixelEdits.set(c, (pixelEdits.get(c) ?? 0) + 1);
+};
+
 class Store {
   state: AppState = {
     doc: null,
@@ -185,6 +191,11 @@ class Store {
   };
 
   get = () => this.state;
+
+  /** Changes whenever history changes (used by autosave to spot real edits). */
+  historyMark(): { top: unknown; undo: number; redo: number } {
+    return { top: this.undoStack[this.undoStack.length - 1] ?? null, undo: this.undoStack.length, redo: this.redoStack.length };
+  }
 
   set(partial: Partial<AppState>) {
     this.state = { ...this.state, ...partial };
@@ -264,9 +275,10 @@ class Store {
     this.redoStack = [];
     // bump version so caches refresh
     const doc = this.state.doc;
+    const pl = doc?.layers.find((x) => x.id === layerId);
+    markEdited(pl ? (target === 'mask' ? pl.mask : pl.canvas) : null);
     if (doc && target === 'canvas') {
-      const l = doc.layers.find((x) => x.id === layerId);
-      if (l) l.version++;
+      if (pl) pl.version++;
     }
     this.syncFlags({ dirty: true });
   }
@@ -280,6 +292,7 @@ class Store {
       const t = l ? (e.target === 'mask' ? l.mask : l.canvas) : null;
       if (l && t) {
         applyPatch(t, e.patch, dir === 'undo' ? 'before' : 'after');
+        markEdited(t);
         l.version++;
       }
       this.syncFlags({ dirty: true });

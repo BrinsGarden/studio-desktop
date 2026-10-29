@@ -8,6 +8,7 @@ import { dropCaches, previewMasks } from './engine/render';
 import { Stroke, applyPatch, type PixelPatch } from './engine/brush';
 import { GPU_FAIL, TOO_BIG, type FromWorker, type Quality, type PickPoint, type ToWorker } from './engine/aiProtocol';
 import type { Rect } from './engine/matte';
+import { capCanvas } from './engine/resample';
 
 type DistOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
 type Req = DistOmit<ToWorker, 'id'>;
@@ -188,10 +189,36 @@ function canvasLike(w: number, h: number) {
   return createCanvas(w, h);
 }
 
+/** Long side the cutout works at. Bigger photos are shrunk first: the AI sees 1024px anyway, and full-size
+ * upscaled photos need several GB for the edge math, which can freeze or crash the computer. */
+const CUT_MAX = 3000;
+
+function shrinkForCutout(layer: Layer): Layer {
+  const c = layer.canvas!;
+  const long = Math.max(c.width, c.height);
+  if (long <= CUT_MAX) return layer;
+  const shown = long * layer.scale;
+  const target = Math.round(Math.min(long, Math.max(CUT_MAX, Math.min(shown * 1.2, 4096))));
+  if (target >= long) return layer;
+  const { canvas, factor } = capCanvas(c, target);
+  const mask = layer.mask ? capCanvas(layer.mask, target).canvas : null;
+  store.mutate('Resize photo for cutout', (d) => {
+    const l = d.layers.find((x) => x.id === layer.id);
+    if (!l) return;
+    l.canvas = canvas;
+    if (mask) l.mask = mask;
+    l.scale = l.scale / factor;
+    l.version++;
+  });
+  dropCaches(layer.id);
+  store.toast(`Photo reduced from ${c.width}×${c.height} to ${canvas.width}×${canvas.height} for the cutout — looks the same on the poster`);
+  return store.state.doc!.layers.find((x) => x.id === layer.id) ?? layer;
+}
+
 /** Start (or reuse) a cutout on the selected layer. Synchronous so brushes work right away. */
 function ensureSession(): Session | null {
   const doc = store.state.doc;
-  const layer = store.selected();
+  let layer = store.selected();
   if (!doc || !layer) {
     store.toast('Select the photo layer you want to cut out');
     return null;
@@ -208,7 +235,8 @@ function ensureSession(): Session | null {
     }
     endSession();
   }
-  const src = layer.canvas;
+  layer = shrinkForCutout(layer);
+  const src = layer.canvas!;
   const w = src.width;
   const h = src.height;
   const s: Session = {

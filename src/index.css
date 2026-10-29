@@ -1111,3 +1111,26 @@ kbd {
   display: inline-flex;
   gap: 2px;
 }
+
+/* ---------- crash recovery ---------- */
+.recovery-backdrop {
+  z-index: 150;
+}
+.recovery {
+  width: min(460px, 100%);
+}
+.recovery h2 {
+  margin: 0 0 8px;
+  font-size: 18px;
+}
+.recovery p {
+  margin: 0 0 18px;
+  color: var(--muted);
+}
+.recovery p strong {
+  color: var(--text);
+}
+.recovery-actions {
+  justify-content: flex-end;
+  gap: 8px;
+}

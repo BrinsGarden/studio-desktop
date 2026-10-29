@@ -15,6 +15,7 @@ import { dropCaches, getSource, layerMatrix, sourceSize, syncMaskSize } from './
 import { invertSelection, selectAll as selAll, selectionLocalBounds, selectionMaskForLayer, type Pt } from './engine/selection';
 import { centerPath } from './engine/swirl';
 import { identityMesh, warpPreset, type WarpPreset } from './engine/mesh';
+import { capCanvas } from './engine/resample';
 
 export function newDocument(width: number, height: number, dpi: number, name: string, background: string) {
   const doc: Doc = { width, height, dpi, name, background, layers: [] };
@@ -30,7 +31,16 @@ export async function addImages(files: File[]) {
   if (!images.length) return;
   try {
     for (const file of images) {
-      const canvas = await loadImageFile(file);
+      const raw = await loadImageFile(file);
+      // huge photos (upscaled 3-4x) eat gigabytes of memory and can crash the laptop; nothing on a poster needs them that big
+      const cur = store.state.doc;
+      const maxLong = cur ? Math.max(4096, Math.round(Math.max(cur.width, cur.height) * 1.25)) : 6000;
+      const { canvas, factor } = capCanvas(raw, maxLong);
+      if (factor < 1) {
+        store.toast(`${baseName(file)} was ${raw.width}×${raw.height} — reduced to ${canvas.width}×${canvas.height} to save memory (still plenty for print)`);
+        raw.width = 0;
+        raw.height = 0;
+      }
       if (!store.state.doc) {
         newDocument(canvas.width, canvas.height, 300, baseName(file), '');
       }

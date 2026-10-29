@@ -5,6 +5,7 @@ import LayersPanel from './components/LayersPanel';
 import Properties from './components/Properties';
 import NewDocDialog from './components/NewDocDialog';
 import CutoutPanel from './components/CutoutPanel';
+import Recovery from './components/Recovery';
 import { cutoutSessionLayerId, cutoutToolActivated, cutoutUndo } from './cutout';
 import { Icon } from './components/icons';
 import { Slider, Segmented } from './components/ui';
@@ -660,6 +661,7 @@ export default function App() {
       {(!doc || showNew) && (
         <NewDocDialog canCancel={!!doc} onClose={() => setShowNew(false)} />
       )}
+      <Recovery />
       {toast && (
         <div className="toast" role="status">
           {toast}
