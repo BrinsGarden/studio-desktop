@@ -1,5 +1,6 @@
 import { applyAdjustments, computeStats, despill, isIdentity, keyOutColor, processEdges, hexToRgb, type ChannelStats } from './adjust';
-import { createCanvas, type Doc, type Layer, type TextProps, type FillProps } from './types';
+import { createCanvas, type BlendIf, type Doc, type Layer, type TextProps, type FillProps } from './types';
+import { MESH_N, drawMesh, isIdentityMesh, meshGrid } from './mesh';
 import { renderSwirl } from './swirl';
 import { renderFire } from './fire';
 import { renderFog } from './fog';
@@ -367,10 +368,37 @@ export function renderDoc(doc: Doc, out: HTMLCanvasElement, k: number, opts: Ren
     }
   }
 
-  for (const layer of doc.layers) {
-    if (!layer.visible || layer.opacity <= 0) continue;
-    if (layer.kind === 'adjust') drawAdjustLayer(doc, layer, ctx, W, H, k);
-    else drawPixelLayer(doc, layer, ctx, W, H, k);
+  const layers = doc.layers;
+  let i = 0;
+  while (i < layers.length) {
+    const base = layers[i];
+    let j = i + 1;
+    while (j < layers.length && layers[j].clip) j++;
+    const clipped = base.kind === 'adjust' ? [] : layers.slice(i + 1, j);
+    if (!clipped.length || base.kind === 'adjust') {
+      if (base.visible && base.opacity > 0) {
+        if (base.kind === 'adjust') drawAdjustLayer(doc, base, ctx, W, H, k);
+        else drawPixelLayer(doc, base, ctx, W, H, k);
+      }
+      i += 1;
+      continue;
+    }
+    // clipping group: clipped layers only show where the base layer has pixels
+    if (base.visible && base.opacity > 0) {
+      const G = temp('group', W, H);
+      drawPixelLayer(doc, { ...base, opacity: 1, blend: 'source-over', blendIf: undefined }, G, W, H, k);
+      for (const c of clipped) {
+        if (!c.visible || c.opacity <= 0) continue;
+        if (c.kind === 'adjust') {
+          drawAdjustLayer(doc, c, G, W, H, k);
+          continue;
+        }
+        const fin = renderPixelLayer(doc, c, W, H, k);
+        if (fin) compositeFinal(G, fin, c, W, H, G.canvas);
+      }
+      compositeFinal(ctx, G.canvas, base, W, H, null);
+    }
+    i = j;
   }
   usePreview = false;
   ctx.globalAlpha = 1;
@@ -409,37 +437,106 @@ function downsample(c: HTMLCanvasElement): Uint8ClampedArray {
 }
 
 function drawPixelLayer(doc: Doc, layer: Layer, ctx: CanvasRenderingContext2D, W: number, H: number, k: number) {
+  const fin = renderPixelLayer(doc, layer, W, H, k);
+  if (fin) compositeFinal(ctx, fin, layer, W, H, null);
+}
+
+const lum8 = (r: number, g: number, b: number) => 0.299 * r + 0.587 * g + 0.114 * b;
+
+function rampFactor(v: number, lo: [number, number], hi: [number, number]): number {
+  let f = 1;
+  if (v < lo[1]) f = lo[1] > lo[0] ? Math.max(0, (v - lo[0]) / (lo[1] - lo[0])) : v < lo[0] ? 0 : 1;
+  if (v > hi[0]) f *= hi[1] > hi[0] ? Math.max(0, (hi[1] - v) / (hi[1] - hi[0])) : v > hi[1] ? 0 : 1;
+  return f;
+}
+
+export function blendIfActive(b: BlendIf | undefined): b is BlendIf {
+  return !!b && b.enabled && (b.thisLo[1] > 0 || b.thisHi[0] < 255 || b.underLo[1] > 0 || b.underHi[0] < 255);
+}
+
+/** Draw a rendered layer onto `target` using its opacity, blend mode, Blend If, and optional clipping base. */
+function compositeFinal(target: CanvasRenderingContext2D, src: HTMLCanvasElement, layer: Layer, W: number, H: number, clipTo: HTMLCanvasElement | null) {
+  let img: HTMLCanvasElement = src;
+  if (blendIfActive(layer.blendIf) || clipTo) {
+    const T = temp('compose', W, H);
+    T.drawImage(src, 0, 0);
+    if (blendIfActive(layer.blendIf)) {
+      const bi = layer.blendIf;
+      const top = T.getImageData(0, 0, W, H);
+      const under = target.getImageData(0, 0, W, H);
+      const d = top.data;
+      const u = under.data;
+      for (let p = 0; p < d.length; p += 4) {
+        if (d[p + 3] === 0) continue;
+        const f = rampFactor(lum8(d[p], d[p + 1], d[p + 2]), bi.thisLo, bi.thisHi) * rampFactor(lum8(u[p], u[p + 1], u[p + 2]), bi.underLo, bi.underHi);
+        if (f < 1) d[p + 3] = Math.round(d[p + 3] * f);
+      }
+      T.putImageData(top, 0, 0);
+    }
+    if (clipTo) {
+      T.globalCompositeOperation = 'destination-in';
+      T.drawImage(clipTo, 0, 0);
+      T.globalCompositeOperation = 'source-over';
+    }
+    img = T.canvas;
+  }
+  target.globalAlpha = layer.opacity;
+  target.globalCompositeOperation = clipTo && layer.blend === 'source-over' ? 'source-atop' : layer.blend;
+  target.drawImage(img, 0, 0);
+  target.globalAlpha = 1;
+  target.globalCompositeOperation = 'source-over';
+}
+
+/** Render one image/text/fill/swirl layer with its mask and effects into a doc-sized canvas (not yet composited). */
+function renderPixelLayer(doc: Doc, layer: Layer, W: number, H: number, k: number): HTMLCanvasElement | null {
   const src = getSource(layer, doc);
-  if (!src) return;
+  if (!src) return null;
   if (layer.kind === 'text' || layer.kind === 'swirl') syncMaskSize(layer, doc);
   const w = src.width;
   const h = src.height;
   const f = Math.min(1, Math.max(0.02, k * layer.scale));
   const adj = adjustedSource(layer, doc, f);
-  if (!adj) return;
+  if (!adj) return null;
   const m = new DOMMatrix().scale(k, k).multiply(layerMatrix(layer, w, h));
   const fx = layer.fx;
 
   // 1. layer pixels (+ blur) into L
   const L = temp('layer', W, H);
-  L.setTransform(m);
-  if (fx.blur > 0) L.filter = `blur(${fx.blur * k}px)`;
-  L.drawImage(adj, 0, 0, w, h);
-  L.filter = 'none';
-
-  // 2. mask
-  if (layer.mask && layer.maskEnabled) {
-    L.globalCompositeOperation = 'destination-in';
-    L.drawImage(layer.mask, 0, 0, w, h);
-    L.globalCompositeOperation = 'source-over';
-  }
   const pm = usePreview ? previewMasks.get(layer.id) : undefined;
-  if (pm) {
-    L.globalCompositeOperation = 'destination-in';
-    L.drawImage(pm, 0, 0, w, h);
-    L.globalCompositeOperation = 'source-over';
+  const warped = !!layer.mesh && !isIdentityMesh(layer.mesh);
+  if (warped) {
+    // mask first (in the layer's own space), then bend the result
+    const M = temp('meshSrc', adj.width, adj.height);
+    M.drawImage(adj, 0, 0);
+    M.globalCompositeOperation = 'destination-in';
+    if (layer.mask && layer.maskEnabled) M.drawImage(layer.mask, 0, 0, adj.width, adj.height);
+    if (pm) M.drawImage(pm, 0, 0, adj.width, adj.height);
+    M.globalCompositeOperation = 'source-over';
+    L.setTransform(m);
+    if (fx.blur > 0) L.filter = `blur(${fx.blur * k}px)`;
+    const scaleOut = Math.max(1e-3, Math.abs(layer.scale) * k);
+    drawMesh(L, M.canvas, w, h, meshGrid(layer.mesh!, MESH_N), MESH_N, 0.6 / scaleOut);
+    L.filter = 'none';
+    L.setTransform(1, 0, 0, 1, 0, 0);
+  } else {
+    L.setTransform(m);
+    if (fx.blur > 0) L.filter = `blur(${fx.blur * k}px)`;
+    L.drawImage(adj, 0, 0, w, h);
+    L.filter = 'none';
+
+    // 2. mask
+    if (layer.mask && layer.maskEnabled) {
+      L.globalCompositeOperation = 'destination-in';
+      L.drawImage(layer.mask, 0, 0, w, h);
+      L.globalCompositeOperation = 'source-over';
+    }
+    if (pm) {
+      L.globalCompositeOperation = 'destination-in';
+      L.drawImage(pm, 0, 0, w, h);
+      L.globalCompositeOperation = 'source-over';
+    }
+    L.setTransform(1, 0, 0, 1, 0, 0);
   }
-  L.setTransform(1, 0, 0, 1, 0, 0);
 
   // 2b. color overlay
   if (fx.overlay?.enabled && fx.overlay.opacity > 0) {
@@ -448,6 +545,9 @@ function drawPixelLayer(doc: Doc, layer: Layer, ctx: CanvasRenderingContext2D, W
     L.fillRect(0, 0, W, H);
     L.globalCompositeOperation = 'source-over';
   }
+
+  // 2c. title styles: gradient overlay, inner shadow, inner glow, bevel
+  innerEffects(L, layer, doc, W, H, k);
 
   // 3. rim light (painted onto the layer itself)
   if (fx.rim.enabled && fx.rim.opacity > 0) {
@@ -523,12 +623,162 @@ function drawPixelLayer(doc: Doc, layer: Layer, ctx: CanvasRenderingContext2D, W
     F.drawImage(L.canvas, 0, 0);
     final = F.canvas;
   }
+  return final;
+}
 
-  ctx.globalAlpha = layer.opacity;
-  ctx.globalCompositeOperation = layer.blend;
-  ctx.drawImage(final, 0, 0);
-  ctx.globalAlpha = 1;
-  ctx.globalCompositeOperation = 'source-over';
+/** Bounding box of a layer on the output canvas (pixels), padded and clamped. */
+function outBox(layer: Layer, doc: Doc, k: number, W: number, H: number, pad: number) {
+  const pts = layerCorners(layer, doc);
+  let x0 = Infinity;
+  let y0 = Infinity;
+  let x1 = -Infinity;
+  let y1 = -Infinity;
+  for (const p of pts) {
+    x0 = Math.min(x0, p.x * k);
+    y0 = Math.min(y0, p.y * k);
+    x1 = Math.max(x1, p.x * k);
+    y1 = Math.max(y1, p.y * k);
+  }
+  if (layer.mesh) {
+    // bent layers can reach past their box
+    const grow = Math.max(x1 - x0, y1 - y0);
+    x0 -= grow;
+    y0 -= grow;
+    x1 += grow;
+    y1 += grow;
+  }
+  const bx = Math.max(0, Math.floor(x0 - pad));
+  const by = Math.max(0, Math.floor(y0 - pad));
+  const bw = Math.min(W, Math.ceil(x1 + pad)) - bx;
+  const bh = Math.min(H, Math.ceil(y1 + pad)) - by;
+  return bw > 0 && bh > 0 ? { x: bx, y: by, w: bw, h: bh } : null;
+}
+
+function innerEffects(L: CanvasRenderingContext2D, layer: Layer, doc: Doc, W: number, H: number, k: number) {
+  const fx = layer.fx;
+  const go = fx.gradOverlay;
+  const is = fx.innerShadow;
+  const ig = fx.innerGlow;
+  const bv = fx.bevel;
+  const anyOn = (go?.enabled && go.opacity > 0) || (is?.enabled && is.opacity > 0) || (ig?.enabled && ig.opacity > 0) || (bv?.enabled && bv.opacity > 0);
+  if (!anyOn) return;
+  const box = outBox(layer, doc, k, W, H, 4);
+  if (!box) return;
+
+  if (go?.enabled && go.opacity > 0) {
+    const G = temp('gradOverlay', W, H);
+    const a = (go.angle * Math.PI) / 180;
+    const cx = box.x + box.w / 2;
+    const cy = box.y + box.h / 2;
+    const dx = Math.cos(a);
+    const dy = -Math.sin(a);
+    const half = Math.abs((box.w / 2) * dx) + Math.abs((box.h / 2) * dy);
+    const g = G.createLinearGradient(cx - dx * half, cy - dy * half, cx + dx * half, cy + dy * half);
+    g.addColorStop(0, go.color2);
+    g.addColorStop(1, go.color1);
+    G.fillStyle = g;
+    G.fillRect(box.x, box.y, box.w, box.h);
+    G.globalCompositeOperation = 'destination-in';
+    G.drawImage(L.canvas, 0, 0);
+    L.globalAlpha = go.opacity;
+    L.globalCompositeOperation = go.blend === 'source-over' ? 'source-atop' : go.blend;
+    L.drawImage(G.canvas, 0, 0);
+    L.globalAlpha = 1;
+    L.globalCompositeOperation = 'source-over';
+  }
+
+  if (is?.enabled && is.opacity > 0) {
+    const a = (is.angle * Math.PI) / 180;
+    const ox = -Math.cos(a) * is.distance * k;
+    const oy = Math.sin(a) * is.distance * k;
+    const S = temp('innerShadow', W, H);
+    S.fillStyle = is.color;
+    S.fillRect(0, 0, W, H);
+    S.globalCompositeOperation = 'destination-out';
+    S.drawImage(L.canvas, ox, oy);
+    const S2 = temp('innerShadow2', W, H);
+    if (is.size > 0) S2.filter = `blur(${(is.size * k) / 2}px)`;
+    S2.drawImage(S.canvas, 0, 0);
+    S2.filter = 'none';
+    S2.globalCompositeOperation = 'destination-in';
+    S2.drawImage(L.canvas, 0, 0);
+    L.globalAlpha = is.opacity;
+    L.globalCompositeOperation = 'source-atop';
+    L.drawImage(S2.canvas, 0, 0);
+    L.globalAlpha = 1;
+    L.globalCompositeOperation = 'source-over';
+  }
+
+  if (ig?.enabled && ig.opacity > 0) {
+    const S = temp('innerGlow', W, H);
+    S.fillStyle = ig.color;
+    S.fillRect(0, 0, W, H);
+    S.globalCompositeOperation = 'destination-out';
+    S.drawImage(L.canvas, 0, 0);
+    const S2 = temp('innerGlow2', W, H);
+    if (ig.size > 0) S2.filter = `blur(${(ig.size * k) / 2}px)`;
+    S2.drawImage(S.canvas, 0, 0);
+    S2.drawImage(S.canvas, 0, 0);
+    S2.filter = 'none';
+    S2.globalCompositeOperation = 'destination-in';
+    S2.drawImage(L.canvas, 0, 0);
+    L.globalAlpha = ig.opacity;
+    L.globalCompositeOperation = 'screen';
+    L.drawImage(S2.canvas, 0, 0);
+    L.globalAlpha = 1;
+    L.globalCompositeOperation = 'source-over';
+  }
+
+  if (bv?.enabled && bv.opacity > 0) {
+    // height map = blurred alpha; light it from `angle` to get highlights and shadows
+    const A = temp('bevelA', W, H);
+    A.filter = `blur(${Math.max(0.5, (bv.size * k) / 2)}px)`;
+    A.drawImage(L.canvas, 0, 0);
+    A.filter = 'none';
+    const { x: bx, y: by, w: bw, h: bh } = box;
+    const hm = A.getImageData(bx, by, bw, bh).data;
+    const base = L.getImageData(bx, by, bw, bh).data;
+    const hi = new ImageData(bw, bh);
+    const sh = new ImageData(bw, bh);
+    const [hr, hg, hb] = hexToRgb(bv.highlight);
+    const [sr, sg, sb] = hexToRgb(bv.shadow);
+    const a = (bv.angle * Math.PI) / 180;
+    const lx = Math.cos(a);
+    const ly = -Math.sin(a);
+    const gain = ((bv.depth / 100) * 9) / Math.max(1, bv.size * k * 0.25);
+    for (let y = 1; y < bh - 1; y++) {
+      for (let x = 1; x < bw - 1; x++) {
+        const i = (y * bw + x) * 4;
+        if (base[i + 3] === 0) continue;
+        const dx = (hm[i + 4 + 3] - hm[i - 4 + 3]) / 255;
+        const dy = (hm[i + bw * 4 + 3] - hm[i - bw * 4 + 3]) / 255;
+        const shade = (dx * lx + dy * ly) * gain;
+        const cover = base[i + 3] / 255;
+        if (shade > 0) {
+          hi.data[i] = hr;
+          hi.data[i + 1] = hg;
+          hi.data[i + 2] = hb;
+          hi.data[i + 3] = Math.min(255, shade * 255 * cover);
+        } else if (shade < 0) {
+          sh.data[i] = sr;
+          sh.data[i + 1] = sg;
+          sh.data[i + 2] = sb;
+          sh.data[i + 3] = Math.min(255, -shade * 255 * cover);
+        }
+      }
+    }
+    const B = temp('bevelB', bw, bh);
+    B.putImageData(hi, 0, 0);
+    L.globalAlpha = bv.opacity;
+    L.globalCompositeOperation = 'screen';
+    L.drawImage(B.canvas, bx, by);
+    B.clearRect(0, 0, bw, bh);
+    B.putImageData(sh, 0, 0);
+    L.globalCompositeOperation = 'multiply';
+    L.drawImage(B.canvas, bx, by);
+    L.globalAlpha = 1;
+    L.globalCompositeOperation = 'source-over';
+  }
 }
 
 /** Render a small thumbnail of a single layer source. */

@@ -24,6 +24,10 @@ import {
   openImagesDialog,
   openProject,
   saveProject,
+  toggleClip,
+  alignLayer,
+  setTransformMode,
+  resetMesh,
 } from './actions';
 import { fontString } from './engine/render';
 import { SWIRL_PRESETS, FIRE_PRESETS } from './engine/types';
@@ -34,6 +38,10 @@ const TOOLS: { id: Tool; label: string; key: string; icon: string }[] = [
   { id: 'cutout', label: 'AI Cutout — click a person', key: 'W', icon: 'wand' },
   { id: 'brush', label: 'Brush', key: 'B', icon: 'brush' },
   { id: 'eraser', label: 'Eraser', key: 'E', icon: 'eraser' },
+  { id: 'dodge', label: 'Dodge & Burn — paint light and shadow', key: 'O', icon: 'dodge' },
+  { id: 'clone', label: 'Clone stamp — Alt+click a source, then paint', key: 'C', icon: 'clone' },
+  { id: 'heal', label: 'Healing brush — like clone, but blends in', key: 'J', icon: 'heal' },
+  { id: 'remove', label: 'Remove — paint over something to make it disappear', key: 'R', icon: 'remove' },
   { id: 'swirl', label: 'Magic swirl', key: 'S', icon: 'swirl' },
   { id: 'fire', label: 'Hellfire', key: 'F', icon: 'fire' },
   { id: 'eyedropper', label: 'Eyedropper', key: 'I', icon: 'eyedropper' },
@@ -188,6 +196,9 @@ export default function App() {
       } else if (ctrl && k === 'a') {
         e.preventDefault();
         selectAll();
+      } else if (ctrl && e.altKey && k === 'g') {
+        e.preventDefault();
+        toggleClip();
       } else if (ctrl && k === 'i' && e.shiftKey) {
         e.preventDefault();
         invertSel();
@@ -216,6 +227,10 @@ export default function App() {
       } else if (k === 'v') store.set({ tool: 'move' });
       else if (k === 'l' || k === 'm') store.set({ tool: 'select' });
       else if (k === 'w') setTool('cutout');
+      else if (k === 'o') setTool('dodge');
+      else if (k === 'c') setTool('clone');
+      else if (k === 'j') setTool('heal');
+      else if (k === 'r') setTool('remove');
       else if (k === 's') store.set({ tool: 'swirl' });
       else if (k === 'f') store.set({ tool: 'fire' });
       else if (k === 'b') store.set({ tool: 'brush' });
@@ -253,6 +268,10 @@ export default function App() {
 
   const setBrush = (patch: Partial<typeof brush>) => store.set({ brush: { ...store.state.brush, ...patch } });
   const cut = useStore((s) => s.cutout);
+  const retouch = useStore((s) => s.retouch);
+  const snap = useStore((s) => s.snap);
+  const transformMode = useStore((s) => s.transformMode);
+  const setRetouch = (patch: Partial<typeof retouch>) => store.set({ retouch: { ...store.state.retouch, ...patch } });
   const setCut = (patch: Partial<typeof cut>) => store.set({ cutout: { ...store.state.cutout, ...patch } });
 
   return (
@@ -285,6 +304,9 @@ export default function App() {
             { label: 'Send layer backward', hint: 'Ctrl+[', run: () => nudgeLayer(-1), disabled: !selectedId },
             { label: 'Duplicate layer', hint: 'Ctrl+J', run: () => duplicateLayer(), disabled: !selectedId },
             { label: 'Add mask', run: addMask, disabled: !selectedId },
+            { label: 'Clip to layer below', hint: 'Ctrl+Alt+G', run: () => toggleClip(), disabled: !selectedId },
+            { label: 'Perspective (distort corners)', run: () => setTransformMode('distort'), disabled: !selectedId },
+            { label: 'Warp', run: () => setTransformMode('warp'), disabled: !selectedId },
             { label: 'Delete layer', hint: 'Del', run: () => deleteLayer(), disabled: !selectedId },
           ]}
         />
@@ -341,11 +363,88 @@ export default function App() {
       <div className="optionsbar">
         {tool === 'move' && (
           <>
+            <Segmented
+              label="Transform mode"
+              value={transformMode}
+              onChange={(v) => setTransformMode(v)}
+              options={[
+                { value: 'free', label: 'Move & scale' },
+                { value: 'distort', label: 'Perspective', title: 'Drag the 4 corners' },
+                { value: 'warp', label: 'Warp', title: 'Drag the grid points to bend the layer' },
+              ]}
+            />
+            {transformMode !== 'free' && selected?.mesh && (
+              <button type="button" className="btn small ghost" onClick={resetMesh}>
+                Reset shape
+              </button>
+            )}
             <label className="check">
               <input type="checkbox" checked={autoSelect} onChange={(e) => store.set({ autoSelect: e.target.checked })} />
-              Auto-select layer on click
+              Auto-select
             </label>
-            <span className="muted">Drag corners to resize · top dot to rotate (Shift snaps) · arrow keys nudge</span>
+            <label className="check" title="Hold Ctrl while dragging to move freely">
+              <input type="checkbox" checked={snap} onChange={(e) => store.set({ snap: e.target.checked })} />
+              Snap
+            </label>
+            <div className="align-btns" role="group" aria-label="Align to page">
+              {(
+                [
+                  ['left', '⇤', 'Align left edge to page'],
+                  ['hcenter', '↔', 'Center horizontally on page'],
+                  ['right', '⇥', 'Align right edge to page'],
+                  ['top', '⤒', 'Align top to page'],
+                  ['vcenter', '↕', 'Center vertically on page'],
+                  ['bottom', '⤓', 'Align bottom to page'],
+                ] as const
+              ).map(([id, glyph, title]) => (
+                <button type="button" key={id} className="btn small ghost" title={title} aria-label={title} disabled={!selectedId} onClick={() => alignLayer(id)}>
+                  {glyph}
+                </button>
+              ))}
+            </div>
+            <span className="muted">{transformMode === 'free' ? 'Corners resize · top dot rotates · Ctrl = no snap' : 'Drag the purple points to bend the layer'}</span>
+          </>
+        )}
+        {(tool === 'dodge' || tool === 'clone' || tool === 'heal' || tool === 'remove') && (
+          <>
+            {tool === 'dodge' && (
+              <Segmented
+                label="Dodge or burn"
+                value={retouch.dodgeMode}
+                onChange={(v) => setRetouch({ dodgeMode: v })}
+                options={[
+                  { value: 'dodge', label: 'Dodge (lighten)' },
+                  { value: 'burn', label: 'Burn (darken)' },
+                ]}
+              />
+            )}
+            <div className="opt-slider">
+              <Slider label="Size" value={brush.size} min={1} max={1000} unit="px" onChange={(v) => setBrush({ size: v })} />
+            </div>
+            {tool === 'dodge' ? (
+              <div className="opt-slider">
+                <Slider label="Strength" value={retouch.strength} min={1} max={100} unit="%" onChange={(v) => setRetouch({ strength: v })} />
+              </div>
+            ) : tool !== 'remove' ? (
+              <div className="opt-slider">
+                <Slider label="Hardness" value={brush.hardness} min={0} max={100} unit="%" onChange={(v) => setBrush({ hardness: v })} />
+              </div>
+            ) : null}
+            {(tool === 'clone' || tool === 'heal') && (
+              <label className="check" title="Keep the same distance to the source between strokes">
+                <input type="checkbox" checked={retouch.aligned} onChange={(e) => setRetouch({ aligned: e.target.checked, offset: null })} />
+                Aligned
+              </label>
+            )}
+            <span className="muted">
+              {tool === 'dodge'
+                ? 'Paints on a separate soft-light layer clipped to this one — the photo is never changed'
+                : tool === 'remove'
+                  ? 'Paint over the thing to remove; it fills from the surroundings when you let go'
+                  : retouch.source
+                    ? 'Paint to copy from the + mark · Alt+click to pick a new source'
+                    : 'Alt+click a clean spot to copy from, then paint'}
+            </span>
           </>
         )}
         {(tool === 'brush' || tool === 'eraser') && (

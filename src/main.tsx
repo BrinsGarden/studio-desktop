@@ -7,9 +7,10 @@ import * as actions from './actions'
 import * as types from './engine/types'
 import * as io from './engine/io'
 import * as render from './engine/render'
+import * as mesh from './engine/mesh'
 
 // Scripting hook: lets an assistant (or the browser console) inspect and adjust layers precisely.
-;(window as unknown as { studio: unknown }).studio = { store, actions, types, io, render }
+;(window as unknown as { studio: unknown }).studio = { store, actions, types, io, render, mesh }
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

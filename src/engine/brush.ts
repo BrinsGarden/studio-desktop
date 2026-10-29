@@ -132,3 +132,106 @@ function hexAlpha(hex: string, a: number): string {
 export function applyPatch(target: HTMLCanvasElement, patch: PixelPatch, which: 'before' | 'after') {
   target.getContext('2d')!.putImageData(which === 'before' ? patch.before : patch.after, patch.x, patch.y);
 }
+
+/**
+ * Clone-stamp stroke: copies pixels from `source` (a snapshot of the layer) shifted by (ox, oy)
+ * into the target through a soft brush. Also records where it painted, for the healing step.
+ */
+export class CloneStroke {
+  private ctx: CanvasRenderingContext2D;
+  private backup: HTMLCanvasElement;
+  private stamp: HTMLCanvasElement;
+  private dabCanvas: HTMLCanvasElement;
+  readonly coverage: HTMLCanvasElement;
+  private covCtx: CanvasRenderingContext2D;
+  private radius: number;
+  private spacing: number;
+  private last: { x: number; y: number } | null = null;
+  minX = Infinity;
+  minY = Infinity;
+  maxX = -Infinity;
+  maxY = -Infinity;
+  readonly target: HTMLCanvasElement;
+  readonly source: HTMLCanvasElement;
+  readonly ox: number;
+  readonly oy: number;
+
+  constructor(target: HTMLCanvasElement, source: HTMLCanvasElement, ox: number, oy: number, diameter: number, hardness: number, opacity: number) {
+    this.target = target;
+    this.source = source;
+    this.ox = ox;
+    this.oy = oy;
+    this.ctx = target.getContext('2d', { willReadFrequently: true })!;
+    this.backup = createCanvas(target.width, target.height);
+    this.backup.getContext('2d')!.drawImage(target, 0, 0);
+    this.radius = Math.max(0.5, diameter / 2);
+    this.spacing = Math.max(0.5, diameter * 0.1);
+    const overlaps = Math.max(1, (this.radius * 2) / this.spacing);
+    const op = Math.min(1, Math.max(0.01, opacity / 100));
+    const dabAlpha = op >= 1 ? 1 : 1 - Math.pow(1 - op, 1 / overlaps);
+    this.stamp = makeStamp(this.radius, hardness / 100, '#ffffff', dabAlpha);
+    this.dabCanvas = createCanvas(this.stamp.width, this.stamp.height);
+    this.coverage = createCanvas(target.width, target.height);
+    this.covCtx = this.coverage.getContext('2d')!;
+  }
+
+  private dab(x: number, y: number) {
+    const r = this.radius;
+    const sx = x - this.stamp.width / 2;
+    const sy = y - this.stamp.height / 2;
+    const d = this.dabCanvas.getContext('2d')!;
+    d.globalCompositeOperation = 'copy';
+    d.drawImage(this.source, -(sx + this.ox), -(sy + this.oy));
+    d.globalCompositeOperation = 'destination-in';
+    d.drawImage(this.stamp, 0, 0);
+    this.ctx.drawImage(this.dabCanvas, sx, sy);
+    this.covCtx.drawImage(this.stamp, sx, sy);
+    this.minX = Math.min(this.minX, x - r - 2);
+    this.minY = Math.min(this.minY, y - r - 2);
+    this.maxX = Math.max(this.maxX, x + r + 2);
+    this.maxY = Math.max(this.maxY, y + r + 2);
+  }
+
+  to(x: number, y: number) {
+    if (!this.last) {
+      this.dab(x, y);
+      this.last = { x, y };
+      return;
+    }
+    const dx = x - this.last.x;
+    const dy = y - this.last.y;
+    const dist = Math.hypot(dx, dy);
+    if (dist < this.spacing) return;
+    const steps = Math.floor(dist / this.spacing);
+    for (let i = 1; i <= steps; i++) this.dab(this.last.x + (dx * i) / steps, this.last.y + (dy * i) / steps);
+    this.last = { x, y };
+  }
+
+  bounds() {
+    if (!isFinite(this.minX)) return null;
+    const x = Math.max(0, Math.floor(this.minX));
+    const y = Math.max(0, Math.floor(this.minY));
+    const x2 = Math.min(this.target.width, Math.ceil(this.maxX));
+    const y2 = Math.min(this.target.height, Math.ceil(this.maxY));
+    return x2 > x && y2 > y ? { x, y, w: x2 - x, h: y2 - y } : null;
+  }
+
+  /** Before/after pixels for undo. */
+  finish(): PixelPatch | null {
+    const b = this.bounds();
+    if (!b) return null;
+    const after = this.ctx.getImageData(b.x, b.y, b.w, b.h);
+    const before = this.backup.getContext('2d', { willReadFrequently: true })!.getImageData(b.x, b.y, b.w, b.h);
+    return { x: b.x, y: b.y, before, after };
+  }
+
+  /** The original (pre-stroke) pixels. */
+  original(): HTMLCanvasElement {
+    return this.backup;
+  }
+}
+
+/** A soft round white dab, useful for painting masks and coverage. */
+export function softStamp(radius: number, hardness: number, alpha = 1): HTMLCanvasElement {
+  return makeStamp(radius, hardness, '#ffffff', alpha);
+}

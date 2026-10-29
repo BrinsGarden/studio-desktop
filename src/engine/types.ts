@@ -67,6 +67,44 @@ export interface Adjustments {
   balance: { shadows: BalanceTriple; midtones: BalanceTriple; highlights: BalanceTriple };
   tint: { color: string; amount: number };
   match: { layerId: string | null; strength: number };
+  /** Recolor by brightness: shadows take the first color, highlights the last. */
+  gradMap: { enabled: boolean; colors: string[]; amount: number };
+}
+
+export const GRADIENT_MAPS: { id: string; label: string; colors: string[] }[] = [
+  { id: 'hell', label: 'Hellfire', colors: ['#0a0000', '#7a0a00', '#ff5a00', '#ffe7a0'] },
+  { id: 'blood', label: 'Blood moon', colors: ['#050000', '#4a0008', '#c4141c', '#ffb48a'] },
+  { id: 'witchy', label: 'Witchy', colors: ['#06000f', '#3c0f6e', '#a23bff', '#c8ffd8'] },
+  { id: 'toxic', label: 'Toxic', colors: ['#000800', '#0f4a10', '#4cff3b', '#f4ffd0'] },
+  { id: 'ice', label: 'Ice', colors: ['#000814', '#0b3a7a', '#5fc8ff', '#f0fbff'] },
+  { id: 'midnight', label: 'Midnight', colors: ['#020208', '#141a3c', '#5a6aa8', '#e6e9ff'] },
+  { id: 'sepia', label: 'Old photo', colors: ['#120a04', '#5a3a1e', '#c49a6a', '#fff3dc'] },
+  { id: 'noir', label: 'Noir', colors: ['#000000', '#ffffff'] },
+];
+
+/**
+ * Blend If: hide this layer where it (or what's under it) is too dark or too bright.
+ * Each pair is [start, end] of a soft ramp, 0..255. Fully shown between lo[1] and hi[0].
+ */
+export interface BlendIf {
+  enabled: boolean;
+  thisLo: [number, number];
+  thisHi: [number, number];
+  underLo: [number, number];
+  underHi: [number, number];
+}
+
+export function defaultBlendIf(): BlendIf {
+  return { enabled: true, thisLo: [0, 0], thisHi: [255, 255], underLo: [0, 0], underHi: [255, 255] };
+}
+
+/**
+ * Bend a layer. Points are normalized to the layer (0..1 across its width/height, may go outside).
+ * 'distort' = 4 corners (TL, TR, BR, BL) with true perspective; 'warp' = 4x4 bezier control grid.
+ */
+export interface LayerMesh {
+  kind: 'distort' | 'warp';
+  pts: [number, number][];
 }
 
 export interface Effects {
@@ -80,6 +118,10 @@ export interface Effects {
   rim: { enabled: boolean; color: string; opacity: number; angle: number; width: number; softness: number };
   outline: { enabled: boolean; color: string; size: number; opacity: number };
   overlay: { enabled: boolean; color: string; opacity: number };
+  gradOverlay: { enabled: boolean; color1: string; color2: string; angle: number; opacity: number; blend: BlendMode };
+  bevel: { enabled: boolean; size: number; depth: number; angle: number; highlight: string; shadow: string; opacity: number };
+  innerGlow: { enabled: boolean; color: string; size: number; opacity: number };
+  innerShadow: { enabled: boolean; color: string; angle: number; distance: number; size: number; opacity: number };
 }
 
 /** A glowing ribbon swirl drawn along a path. Points are relative to the path's center. */
@@ -185,6 +227,12 @@ export interface Layer {
   swirl?: SwirlProps;
   /** Bumped whenever the pixels in `canvas` change. */
   version: number;
+  /** Clipping mask: only show where the nearest non-clipped layer below has pixels. */
+  clip?: boolean;
+  blendIf?: BlendIf;
+  mesh?: LayerMesh;
+  /** Set on the auto-created Dodge & Burn paint layer (holds the id of the layer it lights). */
+  dodgeFor?: string;
 }
 
 export interface Doc {
@@ -218,6 +266,7 @@ export function defaultAdjustments(): Adjustments {
     balance: { shadows: [0, 0, 0], midtones: [0, 0, 0], highlights: [0, 0, 0] },
     tint: { color: '#ff8c1a', amount: 0 },
     match: { layerId: null, strength: 70 },
+    gradMap: { enabled: false, colors: [...GRADIENT_MAPS[0].colors], amount: 100 },
   };
 }
 
@@ -232,6 +281,10 @@ export function defaultEffects(): Effects {
     rim: { enabled: false, color: '#ff9a3c', opacity: 0.8, angle: 45, width: 6, softness: 6 },
     outline: { enabled: false, color: '#39ff88', size: 6, opacity: 1 },
     overlay: { enabled: false, color: '#7a4cff', opacity: 0.5 },
+    gradOverlay: { enabled: false, color1: '#ffe08a', color2: '#b8860b', angle: 90, opacity: 1, blend: 'source-over' },
+    bevel: { enabled: false, size: 10, depth: 100, angle: 120, highlight: '#ffffff', shadow: '#000000', opacity: 0.75 },
+    innerGlow: { enabled: false, color: '#ffd27a', size: 12, opacity: 0.7 },
+    innerShadow: { enabled: false, color: '#000000', angle: 120, distance: 6, size: 10, opacity: 0.6 },
   };
 }
 

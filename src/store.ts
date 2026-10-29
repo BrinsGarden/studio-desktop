@@ -5,7 +5,21 @@ import type { SelectMode, Selection } from './engine/selection';
 import type { Quality, PickPoint } from './engine/aiProtocol';
 import { DEFAULT_EDGES, type EdgeSettings } from './engine/cutoutPipeline';
 
-export type Tool = 'move' | 'select' | 'cutout' | 'brush' | 'eraser' | 'swirl' | 'fire' | 'eyedropper' | 'hand';
+export type Tool = 'move' | 'select' | 'cutout' | 'brush' | 'eraser' | 'dodge' | 'clone' | 'heal' | 'remove' | 'swirl' | 'fire' | 'eyedropper' | 'hand';
+
+export type TransformMode = 'free' | 'distort' | 'warp';
+
+export interface RetouchSettings {
+  dodgeMode: 'dodge' | 'burn';
+  /** 1..100 — how strongly each pass lightens or darkens. */
+  strength: number;
+  /** Clone/heal source in the layer's own pixels. */
+  source: { layerId: string; x: number; y: number } | null;
+  /** Keep the same source offset between strokes (Photoshop's "Aligned"). */
+  aligned: boolean;
+  /** Offset from target to source, set by the first stroke after picking a source. */
+  offset: { layerId: string; ox: number; oy: number } | null;
+}
 
 export type CutoutMode = 'pick' | 'add' | 'remove' | 'refine';
 export type CutoutView = 'overlay' | 'black' | 'white' | 'layers';
@@ -92,6 +106,10 @@ export interface AppState {
   previewHQ: boolean;
   showMask: boolean;
   cutout: CutoutState;
+  retouch: RetouchSettings;
+  transformMode: TransformMode;
+  /** Snap layers to the page and to each other while moving. */
+  snap: boolean;
   rev: number;
   dirty: boolean;
   canUndo: boolean;
@@ -116,6 +134,8 @@ function cloneLayer(l: Layer): Layer {
     text: l.text ? { ...l.text } : undefined,
     fill: l.fill ? { ...l.fill } : undefined,
     swirl: l.swirl ? JSON.parse(JSON.stringify(l.swirl)) : undefined,
+    blendIf: l.blendIf ? JSON.parse(JSON.stringify(l.blendIf)) : undefined,
+    mesh: l.mesh ? JSON.parse(JSON.stringify(l.mesh)) : undefined,
   };
 }
 
@@ -143,6 +163,9 @@ class Store {
     previewHQ: false,
     showMask: false,
     cutout: { ...DEFAULT_CUTOUT, edges: { ...DEFAULT_EDGES } },
+    retouch: { dodgeMode: 'dodge', strength: 20, source: null, aligned: true, offset: null },
+    transformMode: 'free',
+    snap: true,
     rev: 0,
     dirty: false,
     canUndo: false,

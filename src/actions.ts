@@ -14,6 +14,7 @@ import { download, exportImage, imageLayer, loadImageFile, parseProject, pickFil
 import { dropCaches, getSource, layerMatrix, sourceSize, syncMaskSize } from './engine/render';
 import { invertSelection, selectAll as selAll, selectionLocalBounds, selectionMaskForLayer, type Pt } from './engine/selection';
 import { centerPath } from './engine/swirl';
+import { identityMesh, warpPreset, type WarpPreset } from './engine/mesh';
 
 export function newDocument(width: number, height: number, dpi: number, name: string, background: string) {
   const doc: Doc = { width, height, dpi, name, background, layers: [] };
@@ -193,6 +194,8 @@ export function duplicateLayer(id = store.state.selectedId) {
     text: src.text ? { ...src.text } : undefined,
     fill: src.fill ? { ...src.fill } : undefined,
     swirl: src.swirl ? JSON.parse(JSON.stringify(src.swirl)) : undefined,
+    blendIf: src.blendIf ? JSON.parse(JSON.stringify(src.blendIf)) : undefined,
+    mesh: src.mesh ? JSON.parse(JSON.stringify(src.mesh)) : undefined,
     version: 0,
   };
   store.mutate('Duplicate layer', (d) => {
@@ -526,4 +529,129 @@ export function createSwirl(pts: Pt[]) {
     insertAboveSelected(dd, layer);
     return layer.id;
   });
+}
+
+/* ---------------- clipping, dodge & burn, align, transform ---------------- */
+
+/** Toggle "clip to the layer below" on a layer. */
+export function toggleClip(id = store.state.selectedId) {
+  const doc = store.state.doc;
+  const i = doc?.layers.findIndex((l) => l.id === id) ?? -1;
+  if (!doc || i < 0) return;
+  if (i === 0 && !doc.layers[0].clip) {
+    store.toast('A clipping mask needs a layer below it to clip to');
+    return;
+  }
+  const on = !doc.layers[i].clip;
+  store.updateLayer(doc.layers[i].id, (l) => (l.clip = on), on ? 'Clip to layer below' : 'Release clipping mask', `clip${Date.now()}`);
+  if (on) store.toast(`"${doc.layers[i].name}" now only shows on "${doc.layers[i - 1].name}"`);
+}
+
+/**
+ * Find (or create) the Dodge & Burn paint layer for `baseId`: a transparent soft-light layer
+ * clipped to the base, so painting white lightens and black darkens without touching the photo.
+ */
+export function ensureDodgeLayer(baseId: string): Layer | null {
+  const doc = store.state.doc;
+  if (!doc) return null;
+  let i = doc.layers.findIndex((l) => l.id === baseId);
+  if (i < 0) return null;
+  let base = doc.layers[i];
+  if (base.dodgeFor) {
+    // painting on the dodge layer itself — use it
+    return base;
+  }
+  // a clipped layer: light its clipping base instead
+  while (base.clip && i > 0) {
+    i--;
+    base = doc.layers[i];
+  }
+  for (let j = i + 1; j < doc.layers.length && doc.layers[j].clip; j++) {
+    if (doc.layers[j].dodgeFor === base.id) return doc.layers[j];
+  }
+  if (base.kind === 'adjust') return null;
+  const { w, h } = sourceSize(base, doc);
+  const layer = makeLayer('image', `Dodge & Burn — ${base.name}`, {
+    canvas: createCanvas(w, h),
+    x: base.x,
+    y: base.y,
+    scale: base.scale,
+    rotation: base.rotation,
+    flipX: base.flipX,
+    flipY: base.flipY,
+    blend: 'soft-light',
+    clip: true,
+    dodgeFor: base.id,
+    mesh: base.mesh ? JSON.parse(JSON.stringify(base.mesh)) : undefined,
+  });
+  const keepSelected = store.state.selectedId;
+  store.mutate('Add Dodge & Burn layer', (d) => {
+    let at = d.layers.findIndex((l) => l.id === base.id) + 1;
+    while (at < d.layers.length && d.layers[at].clip) at++;
+    d.layers.splice(at, 0, layer);
+    return keepSelected;
+  });
+  store.toast('Added a Dodge & Burn layer (soft light, clipped) — your photo stays untouched');
+  return store.state.doc!.layers.find((l) => l.id === layer.id) ?? null;
+}
+
+export type AlignTo = 'left' | 'hcenter' | 'right' | 'top' | 'vcenter' | 'bottom';
+
+/** Bounding box of a layer in document pixels. */
+export function layerBox(l: Layer, doc: Doc) {
+  const { w, h } = sourceSize(l, doc);
+  const m = layerMatrix(l, w, h);
+  const pts = [
+    [0, 0],
+    [w, 0],
+    [w, h],
+    [0, h],
+  ].map(([x, y]) => m.transformPoint(new DOMPoint(x, y)));
+  const xs = pts.map((p) => p.x);
+  const ys = pts.map((p) => p.y);
+  return { x0: Math.min(...xs), y0: Math.min(...ys), x1: Math.max(...xs), y1: Math.max(...ys) };
+}
+
+/** Line a layer up with the page edges or center. */
+export function alignLayer(to: AlignTo) {
+  const doc = store.state.doc;
+  const l = store.selected();
+  if (!doc || !l || l.kind === 'adjust') return;
+  const b = layerBox(l, doc);
+  let dx = 0;
+  let dy = 0;
+  if (to === 'left') dx = -b.x0;
+  if (to === 'right') dx = doc.width - b.x1;
+  if (to === 'hcenter') dx = doc.width / 2 - (b.x0 + b.x1) / 2;
+  if (to === 'top') dy = -b.y0;
+  if (to === 'bottom') dy = doc.height - b.y1;
+  if (to === 'vcenter') dy = doc.height / 2 - (b.y0 + b.y1) / 2;
+  store.updateLayer(l.id, (x) => {
+    x.x += dx;
+    x.y += dy;
+  }, 'Align', `align${Date.now()}`);
+}
+
+/** Switch the Move tool between free transform, perspective distort and warp. */
+export function setTransformMode(mode: 'free' | 'distort' | 'warp') {
+  store.set({ transformMode: mode, tool: 'move' });
+  const l = store.selected();
+  if (!l || l.kind === 'adjust' || mode === 'free') return;
+  if (l.mesh?.kind !== mode) {
+    store.updateLayer(l.id, (x) => (x.mesh = identityMesh(mode)), mode === 'distort' ? 'Start distort' : 'Start warp', `mesh${Date.now()}`);
+  }
+}
+
+export function resetMesh() {
+  const l = store.selected();
+  if (!l?.mesh) return;
+  store.updateLayer(l.id, (x) => (x.mesh = undefined), 'Reset warp', `mesh${Date.now()}`);
+  store.set({ transformMode: 'free' });
+}
+
+export function applyWarpPreset(kind: WarpPreset, bend: number) {
+  const l = store.selected();
+  if (!l || l.kind === 'adjust') return;
+  store.updateLayer(l.id, (x) => (x.mesh = warpPreset(kind, bend)), 'Warp preset', `warp:${l.id}`);
+  store.set({ transformMode: 'warp', tool: 'move' });
 }

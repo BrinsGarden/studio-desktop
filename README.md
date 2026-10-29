@@ -9,6 +9,14 @@ A lightweight, Photoshop-style poster editor that runs in the browser. Built for
 - **Layers** — image, text, gradient/fill, and color-adjustment layers; drag to reorder, show/hide, rename, duplicate
 - **Blend modes & opacity** — Normal, Multiply, Screen, Overlay, Soft Light, Color, Luminosity and more
 - **AI Cutout (W)** — click a person and the AI cuts them out with real hair edges. Drag a box to isolate one person in a group shot, Shift+click to add a missed part, Alt+click to leave something out. Touch up with **Add / Remove** brushes and a **Refine edge** brush for hair and feathers; Smart edge, Shift edge, Smooth, Feather and Contrast sliders; **Decontaminate colors** removes the old background's tint from edges. View the result as a red overlay, on black, on white, or in the poster, then apply as a new masked layer (original kept, hidden) or as this layer's mask. Runs entirely in your browser — the models download once (Segment Anything for "which object", BiRefNet or RMBG for the matte) and are cached; uses your graphics card through WebGPU when available.
+- **Clipping masks** (Ctrl+Alt+G) — a layer only shows on the pixels of the layer below: recolor or relight one performer without touching anything else
+- **Blend If** — hide a layer by brightness (drop the black behind fire/fog, or let light hit only bright areas), with soft fades
+- **Dodge & Burn (O)** — paint light and shadow onto an automatic soft-light layer clipped to the photo; the photo itself is never changed
+- **Clone stamp (C), Healing brush (J), Remove (R)** — Alt+click a source and paint; healing matches the surrounding tone; Remove fills whatever you paint over from its surroundings (content-aware)
+- **Perspective & Warp** — drag corners for true perspective, or bend any layer with a 4×4 warp grid; presets: Arc, Arch, Bulge, Flag, Rise, Squeeze (great for titles)
+- **Title styles** — gradient overlay (gold, blood, silver…), bevel & emboss, inner shadow, inner glow
+- **Gradient map** — grade a layer or the whole poster into one palette (Hellfire, Blood moon, Witchy, Toxic, Ice, Midnight, Old photo, Noir)
+- **Snapping & align** — layers snap to the page and to each other with guide lines (hold Ctrl to move freely); one-click align to page edges/center
 - **Selections** — Lasso, Polygon, Ellipse and Rectangle with feather, Shift to add, Alt to subtract, invert. Copy or cut the selection to a new layer (Ctrl+J / Ctrl+Shift+J), delete pixels, or turn it into a mask. Painting stays inside the selection.
 - **Magic swirl** — draw a path and get glowing, multi-strand colorful ribbons with sparkles; presets (Witchy, Rainbow, Fire, Toxic, Ice, Blood moon), editable strands, twists, spread, thickness, glow, depth and taper
 - **Fog** — wispy ground fog layer with thickness, height, wispiness and color; only covers the bottom, so it can sit between any layers
@@ -29,6 +37,9 @@ A lightweight, Photoshop-style poster editor that runs in the browser. Built for
 | Key | Action |
 | --- | --- |
 | V / L / W / B / E / S / I / H | Move, Select, AI Cutout, Brush, Eraser, Swirl, Eyedropper, Hand |
+| O / C / J / R | Dodge & Burn, Clone stamp, Healing brush, Remove |
+| Alt+click (Clone/Heal) | Pick the source spot |
+| Ctrl+Alt+G | Clip layer to the one below |
 | Enter / Esc (Cutout) | Apply as new layer / Cancel |
 | Ctrl+D / Ctrl+A / Ctrl+Shift+I | Deselect / Select all / Invert |
 | Ctrl+Shift+J | Cut selection to new layer |

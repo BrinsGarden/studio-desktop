@@ -106,6 +106,7 @@ export function isIdentity(a: Adjustments): boolean {
     a.lightness === 0 &&
     balanceIsZero(a.balance) &&
     (a.tint.amount === 0) &&
+    !(a.gradMap?.enabled && a.gradMap.amount > 0 && a.gradMap.colors.length > 0) &&
     (!a.match.layerId || a.match.strength === 0)
   );
 }
@@ -213,6 +214,22 @@ function hslToRgb(h: number, s: number, l: number): [number, number, number] {
 
 const lum = (r: number, g: number, b: number) => 0.299 * r + 0.587 * g + 0.114 * b;
 
+/** 256-entry RGB lookup for a gradient map (colors spaced evenly from shadows to highlights). */
+export function gradientMapLut(colors: string[]): Uint8ClampedArray {
+  const lut = new Uint8ClampedArray(256 * 3);
+  const rgb = colors.map(hexToRgb);
+  const n = rgb.length;
+  for (let v = 0; v < 256; v++) {
+    const t = n === 1 ? 0 : (v / 255) * (n - 1);
+    const i = Math.min(n - 2, Math.floor(t));
+    const f = n === 1 ? 0 : t - i;
+    const a = rgb[Math.max(0, i)];
+    const b = rgb[Math.min(n - 1, i + 1)];
+    for (let c = 0; c < 3; c++) lut[v * 3 + c] = a[c] + (b[c] - a[c]) * f;
+  }
+  return lut;
+}
+
 /** Apply adjustments in place to RGBA pixel data. Alpha is untouched. */
 export function applyAdjustments(
   data: Uint8ClampedArray,
@@ -228,6 +245,9 @@ export function applyAdjustments(
   const tintAmt = a.tint.amount / 100;
   const tint = hexToRgb(a.tint.color);
   const tintLum = Math.max(1, lum(tint[0], tint[1], tint[2]));
+  const gm = a.gradMap?.enabled && a.gradMap.amount > 0 && a.gradMap.colors.length ? a.gradMap : null;
+  const gmLut = gm ? gradientMapLut(gm.colors) : null;
+  const gmAmt = gm ? Math.min(1, gm.amount / 100) : 0;
 
   for (let i = 0; i < data.length; i += 4) {
     if (data[i + 3] === 0) continue;
@@ -246,6 +266,12 @@ export function applyAdjustments(
       r = r + ((y * tint[0]) / tintLum - r) * tintAmt;
       g = g + ((y * tint[1]) / tintLum - g) * tintAmt;
       b = b + ((y * tint[2]) / tintLum - b) * tintAmt;
+    }
+    if (gmLut) {
+      const k = Math.max(0, Math.min(255, Math.round(lum(r, g, b)))) * 3;
+      r = r + (gmLut[k] - r) * gmAmt;
+      g = g + (gmLut[k + 1] - g) * gmAmt;
+      b = b + (gmLut[k + 2] - b) * gmAmt;
     }
     data[i] = r;
     data[i + 1] = g;

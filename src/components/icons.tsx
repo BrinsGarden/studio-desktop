@@ -25,6 +25,11 @@ const paths: Record<string, string> = {
   flipV: 'M3 12h18M7 8l5-5 5 5zM7 16l5 5 5-5z',
   swap: 'M7 7h13l-3-3M17 17H4l3 3',
   wand: 'M4 20L15 9M13.5 7.5l3 3M18 2v3M16.5 3.5h3M21 7v2M20 8h2M11 3v2M10 4h2',
+  dodge: 'M15 9a5 5 0 1 1-10 0 5 5 0 0 1 10 0zM13.5 12.5L21 20M10 4v2M10 12v2M5 9H3',
+  clone: 'M8 3h8v6H8zM12 9v4M5 13h14v4H5zM4 21h16',
+  heal: 'M4.5 14.5l10-10a3.5 3.5 0 0 1 5 5l-10 10a3.5 3.5 0 0 1-5-5zM9.5 9.5l5 5M11 12h.01M13 10h.01M12 14h.01M14 12h.01',
+  remove: 'M5 19h14M7 15l7-11 4 3-7 11zM17 3l1 2M21 5l-2 1M19 1v2',
+  clip: 'M7 4v9a5 5 0 0 0 10 0V7M13 7v6a1 1 0 0 1-2 0V5',
 };
 
 export function Icon({ name, size = 18 }: { name: keyof typeof paths | string; size?: number }) {

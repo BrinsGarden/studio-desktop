@@ -14,11 +14,15 @@ import {
   type SwirlProps,
   SWIRL_PRESETS,
   FIRE_PRESETS,
+  GRADIENT_MAPS,
+  defaultBlendIf,
+  type BlendIf,
 } from '../engine/types';
+import { WARP_PRESETS, type WarpPreset } from '../engine/mesh';
 import { ColorField, Section, Segmented, Select, Slider } from './ui';
 import { CurvesEditor } from './CurvesEditor';
 import { Icon } from './icons';
-import { addMask, deleteMask, fitLayerToCanvas, invertMask, rasterize } from '../actions';
+import { addMask, applyWarpPreset, deleteMask, fitLayerToCanvas, invertMask, rasterize, resetMesh, setTransformMode, toggleClip } from '../actions';
 import { fontString } from '../engine/render';
 
 type Tab = 'layer' | 'color' | 'effects';
@@ -116,7 +120,13 @@ function LayerTab({ layer }: { layer: Layer }) {
           defaultValue={100}
           onChange={(v) => up(layer, 'Opacity', (l) => (l.opacity = v / 100))}
         />
+        <label className="check" title="Ctrl+Alt+G">
+          <input type="checkbox" checked={!!layer.clip} onChange={() => toggleClip(layer.id)} />
+          Clip to layer below <span className="muted">(only shows on that layer's pixels)</span>
+        </label>
       </Section>
+
+      {layer.kind !== 'adjust' && <BlendIfSection layer={layer} />}
 
       {layer.kind !== 'adjust' && (
         <Section title="Transform">
@@ -172,6 +182,7 @@ function LayerTab({ layer }: { layer: Layer }) {
               Fill
             </button>
           </div>
+          <WarpControls layer={layer} />
           {(layer.kind === 'text' || layer.kind === 'fill' || layer.kind === 'swirl') && (
             <button type="button" className="btn small ghost" onClick={() => rasterize(layer.id)}>
               Rasterize (turn into paintable pixels)
@@ -786,7 +797,148 @@ function ColorTab({ layer }: { layer: Layer }) {
           ))}
         </div>
       </Section>
+
+      <GradientMapSection layer={layer} />
     </>
+  );
+}
+
+function GradientMapSection({ layer }: { layer: Layer }) {
+  const gm = layer.adj.gradMap ?? defaultAdjustments().gradMap;
+  const set = (fn: (g: Adjustments['gradMap']) => void) =>
+    up(layer, 'Gradient map', (l) => {
+      const g = { ...(l.adj.gradMap ?? defaultAdjustments().gradMap), colors: [...(l.adj.gradMap?.colors ?? defaultAdjustments().gradMap.colors)] };
+      fn(g);
+      l.adj.gradMap = g;
+    });
+  return (
+    <Section title="Gradient map" defaultOpen={gm.enabled} enabled={gm.enabled} onToggle={(v) => set((g) => (g.enabled = v))}>
+      <p className="hint">Recolors by brightness: shadows get the left color, highlights the right. On an adjustment layer it grades the whole poster into one palette.</p>
+      <div className="gm-bar" style={{ background: `linear-gradient(90deg, ${gm.colors.join(',')})` }} aria-hidden="true" />
+      <div className="row" role="group" aria-label="Gradient map presets">
+        {GRADIENT_MAPS.map((p) => (
+          <button
+            type="button"
+            key={p.id}
+            className="preset-chip"
+            title={p.label}
+            aria-label={`${p.label} gradient map`}
+            style={{ background: `linear-gradient(90deg, ${p.colors.join(',')})` }}
+            onClick={() => set((g) => {
+              g.colors = [...p.colors];
+              g.enabled = true;
+            })}
+          />
+        ))}
+      </div>
+      {gm.colors.map((c, i) => (
+        <div className="row" key={i}>
+          <ColorField label={i === 0 ? 'Shadows' : i === gm.colors.length - 1 ? 'Highlights' : `Mid ${i}`} value={c} onChange={(v) => set((g) => {
+            g.colors[i] = v;
+            g.enabled = true;
+          })} />
+          {gm.colors.length > 2 && (
+            <button type="button" className="icon-btn" aria-label="Remove color" title="Remove this color" onClick={() => set((g) => g.colors.splice(i, 1))}>
+              <Icon name="trash" size={14} />
+            </button>
+          )}
+        </div>
+      ))}
+      {gm.colors.length < 6 && (
+        <button type="button" className="btn small ghost" onClick={() => set((g) => g.colors.splice(g.colors.length - 1, 0, g.colors[Math.max(0, g.colors.length - 2)]))}>
+          Add a color
+        </button>
+      )}
+      <Slider label="Amount" value={gm.amount} min={0} max={100} unit="%" defaultValue={100} onChange={(v) => set((g) => {
+        g.amount = v;
+        g.enabled = true;
+      })} />
+    </Section>
+  );
+}
+
+function BlendIfSection({ layer }: { layer: Layer }) {
+  const b = layer.blendIf ?? { ...defaultBlendIf(), enabled: false };
+  const set = (fn: (x: BlendIf) => void) =>
+    up(layer, 'Blend If', (l) => {
+      const x: BlendIf = JSON.parse(JSON.stringify(l.blendIf ?? defaultBlendIf()));
+      x.enabled = true;
+      fn(x);
+      l.blendIf = x;
+    });
+  const darkRow = (which: 'thisLo' | 'underLo', label: string) => (
+    <>
+      <Slider label={label} value={b[which][1]} min={0} max={255} defaultValue={0} onChange={(v) => set((x) => {
+        const soft = x[which][1] - x[which][0];
+        x[which] = [Math.max(0, v - soft), v];
+      })} />
+      <Slider label="Fade" value={b[which][1] - b[which][0]} min={0} max={128} defaultValue={0} onChange={(v) => set((x) => (x[which] = [Math.max(0, x[which][1] - v), x[which][1]]))} />
+    </>
+  );
+  const brightRow = (which: 'thisHi' | 'underHi', label: string) => (
+    <>
+      <Slider label={label} value={b[which][0]} min={0} max={255} defaultValue={255} onChange={(v) => set((x) => {
+        const soft = x[which][1] - x[which][0];
+        x[which] = [v, Math.min(255, v + soft)];
+      })} />
+      <Slider label="Fade" value={b[which][1] - b[which][0]} min={0} max={128} defaultValue={0} onChange={(v) => set((x) => (x[which] = [x[which][0], Math.min(255, x[which][0] + v)]))} />
+    </>
+  );
+  return (
+    <Section title="Blend If" defaultOpen={!!layer.blendIf?.enabled} enabled={!!layer.blendIf?.enabled} onToggle={(v) => set((x) => (x.enabled = v))}>
+      <p className="hint">Hide parts of this layer by brightness. Fire, fog or light on black? Raise "This layer: hide darker" to drop the black. "Underneath" lets fog show only over dark areas, or light only hit bright ones.</p>
+      <div className="sub-label">This layer</div>
+      {darkRow('thisLo', 'Hide darker')}
+      {brightRow('thisHi', 'Hide brighter')}
+      <div className="sub-label">Underneath</div>
+      {darkRow('underLo', 'Hide over dark')}
+      {brightRow('underHi', 'Hide over bright')}
+      <button type="button" className="btn small ghost" onClick={() => up(layer, 'Reset Blend If', (l) => (l.blendIf = undefined))}>
+        Reset
+      </button>
+    </Section>
+  );
+}
+
+function WarpControls({ layer }: { layer: Layer }) {
+  const mode = useStore((s) => s.transformMode);
+  const [preset, setPreset] = useState<WarpPreset>('arc');
+  const [bend, setBend] = useState(40);
+  if (layer.kind === 'adjust') return null;
+  return (
+    <div className="warp-box">
+      <Segmented
+        label="Transform mode"
+        value={mode}
+        onChange={(v) => setTransformMode(v)}
+        options={[
+          { value: 'free', label: 'Move & scale' },
+          { value: 'distort', label: 'Perspective', title: 'Drag the 4 corners' },
+          { value: 'warp', label: 'Warp', title: 'Drag the grid points to bend it' },
+        ]}
+      />
+      <div className="row">
+        <select aria-label="Warp style" value={preset} onChange={(e) => setPreset(e.target.value as WarpPreset)}>
+          {WARP_PRESETS.map((p) => (
+            <option key={p} value={p}>
+              {p[0].toUpperCase() + p.slice(1)}
+            </option>
+          ))}
+        </select>
+        <button type="button" className="btn small" onClick={() => applyWarpPreset(preset, bend)}>
+          Apply warp
+        </button>
+        {layer.mesh && (
+          <button type="button" className="btn small ghost" onClick={resetMesh}>
+            Reset shape
+          </button>
+        )}
+      </div>
+      <Slider label="Bend" value={bend} min={-100} max={100} unit="%" defaultValue={40} onChange={(v) => {
+        setBend(v);
+        if (layer.mesh?.kind === 'warp') applyWarpPreset(preset, v);
+      }} />
+    </div>
   );
 }
 
@@ -810,6 +962,7 @@ function EffectsTab({ layer }: { layer: Layer }) {
           Reset effects
         </button>
       </div>
+      <TitleStyles layer={layer} />
       <Section title="Outline" enabled={!!fx.outline?.enabled} onToggle={(v) => set('Outline', (f) => (f.outline = { ...(f.outline ?? defaultEffects().outline), enabled: v }))}>
         <p className="hint">A solid edge around the layer's shape — great with a glow for a magical aura.</p>
         <ColorField label="Color" value={fx.outline?.color ?? '#39ff88'} onChange={(v) => set('Outline', (f) => (f.outline = { ...(f.outline ?? defaultEffects().outline), color: v, enabled: true }))} />
@@ -841,6 +994,63 @@ function EffectsTab({ layer }: { layer: Layer }) {
         <Slider label="Distance" value={fx.shadow.distance} min={0} max={200} unit="px" onChange={(v) => set('Drop shadow', (f) => { f.shadow.distance = v; f.shadow.enabled = true; })} />
         <Slider label="Size" value={fx.shadow.size} min={0} max={200} unit="px" onChange={(v) => set('Drop shadow', (f) => { f.shadow.size = v; f.shadow.enabled = true; })} />
         <Slider label="Opacity" value={Math.round(fx.shadow.opacity * 100)} min={0} max={100} unit="%" onChange={(v) => set('Drop shadow', (f) => { f.shadow.opacity = v / 100; f.shadow.enabled = true; })} />
+      </Section>
+    </>
+  );
+}
+
+function TitleStyles({ layer }: { layer: Layer }) {
+  const d = defaultEffects();
+  const go = layer.fx.gradOverlay ?? d.gradOverlay;
+  const bv = layer.fx.bevel ?? d.bevel;
+  const ig = layer.fx.innerGlow ?? d.innerGlow;
+  const is = layer.fx.innerShadow ?? d.innerShadow;
+  const setFx = <K extends 'gradOverlay' | 'bevel' | 'innerGlow' | 'innerShadow'>(key: K, label: string, patch: Partial<Effects[K]>) =>
+    up(layer, label, (l) => {
+      (l.fx as Effects)[key] = { ...((l.fx[key] ?? d[key]) as Effects[K]), ...patch } as Effects[K];
+    });
+  return (
+    <>
+      <Section title="Gradient overlay" defaultOpen={go.enabled} enabled={go.enabled} onToggle={(v) => setFx('gradOverlay', 'Gradient overlay', { enabled: v })}>
+        <p className="hint">Fills the shape with a gradient — molten gold or blood-red titles.</p>
+        <div className="gm-bar" style={{ background: `linear-gradient(${90 - go.angle}deg, ${go.color2}, ${go.color1})` }} aria-hidden="true" />
+        <ColorField label="Top / start" value={go.color1} onChange={(v) => setFx('gradOverlay', 'Gradient overlay', { color1: v, enabled: true })} />
+        <ColorField label="Bottom / end" value={go.color2} onChange={(v) => setFx('gradOverlay', 'Gradient overlay', { color2: v, enabled: true })} />
+        <div className="row">
+          {[
+            ['#fff2b0', '#b8860b', 'Gold'],
+            ['#ff4a3d', '#4a0000', 'Blood'],
+            ['#d9c2ff', '#3c0f6e', 'Witchy'],
+            ['#ffffff', '#6a7a8c', 'Silver'],
+            ['#ffe066', '#ff2a00', 'Fire'],
+          ].map(([a, b, name]) => (
+            <button type="button" key={name} className="preset-chip" title={name} aria-label={`${name} gradient`} style={{ background: `linear-gradient(180deg, ${a}, ${b})` }} onClick={() => setFx('gradOverlay', 'Gradient overlay', { color1: a, color2: b, enabled: true })} />
+          ))}
+        </div>
+        <Slider label="Angle" value={go.angle} min={-180} max={180} unit="°" defaultValue={90} onChange={(v) => setFx('gradOverlay', 'Gradient overlay', { angle: v, enabled: true })} />
+        <Select label="Blend mode" value={go.blend} options={BLEND_MODES} onChange={(v) => setFx('gradOverlay', 'Gradient overlay', { blend: v, enabled: true })} />
+        <Slider label="Opacity" value={Math.round(go.opacity * 100)} min={0} max={100} unit="%" onChange={(v) => setFx('gradOverlay', 'Gradient overlay', { opacity: v / 100, enabled: true })} />
+      </Section>
+      <Section title="Bevel & emboss" defaultOpen={bv.enabled} enabled={bv.enabled} onToggle={(v) => setFx('bevel', 'Bevel', { enabled: v })}>
+        <p className="hint">Makes the shape look carved or raised, lit from one side.</p>
+        <Slider label="Size" value={bv.size} min={1} max={80} unit="px" onChange={(v) => setFx('bevel', 'Bevel', { size: v, enabled: true })} />
+        <Slider label="Depth" value={bv.depth} min={10} max={400} unit="%" onChange={(v) => setFx('bevel', 'Bevel', { depth: v, enabled: true })} />
+        <Slider label="Light angle" value={bv.angle} min={-180} max={180} unit="°" onChange={(v) => setFx('bevel', 'Bevel', { angle: v, enabled: true })} />
+        <ColorField label="Highlight" value={bv.highlight} onChange={(v) => setFx('bevel', 'Bevel', { highlight: v, enabled: true })} />
+        <ColorField label="Shadow" value={bv.shadow} onChange={(v) => setFx('bevel', 'Bevel', { shadow: v, enabled: true })} />
+        <Slider label="Opacity" value={Math.round(bv.opacity * 100)} min={0} max={100} unit="%" onChange={(v) => setFx('bevel', 'Bevel', { opacity: v / 100, enabled: true })} />
+      </Section>
+      <Section title="Inner shadow" defaultOpen={is.enabled} enabled={is.enabled} onToggle={(v) => setFx('innerShadow', 'Inner shadow', { enabled: v })}>
+        <ColorField label="Color" value={is.color} onChange={(v) => setFx('innerShadow', 'Inner shadow', { color: v, enabled: true })} />
+        <Slider label="Light angle" value={is.angle} min={-180} max={180} unit="°" onChange={(v) => setFx('innerShadow', 'Inner shadow', { angle: v, enabled: true })} />
+        <Slider label="Distance" value={is.distance} min={0} max={80} unit="px" onChange={(v) => setFx('innerShadow', 'Inner shadow', { distance: v, enabled: true })} />
+        <Slider label="Size" value={is.size} min={0} max={80} unit="px" onChange={(v) => setFx('innerShadow', 'Inner shadow', { size: v, enabled: true })} />
+        <Slider label="Opacity" value={Math.round(is.opacity * 100)} min={0} max={100} unit="%" onChange={(v) => setFx('innerShadow', 'Inner shadow', { opacity: v / 100, enabled: true })} />
+      </Section>
+      <Section title="Inner glow" defaultOpen={ig.enabled} enabled={ig.enabled} onToggle={(v) => setFx('innerGlow', 'Inner glow', { enabled: v })}>
+        <ColorField label="Color" value={ig.color} onChange={(v) => setFx('innerGlow', 'Inner glow', { color: v, enabled: true })} />
+        <Slider label="Size" value={ig.size} min={1} max={120} unit="px" onChange={(v) => setFx('innerGlow', 'Inner glow', { size: v, enabled: true })} />
+        <Slider label="Opacity" value={Math.round(ig.opacity * 100)} min={0} max={100} unit="%" onChange={(v) => setFx('innerGlow', 'Inner glow', { opacity: v / 100, enabled: true })} />
       </Section>
     </>
   );

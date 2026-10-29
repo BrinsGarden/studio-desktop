@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { store, useStore } from '../store';
 import { createCanvas, makeLayer, type Doc, type Layer } from '../engine/types';
-import { docToLocal, hitTest, layerCorners, layerMatrix, renderDoc, onFontsChanged, sourceSize } from '../engine/render';
+import { docToLocal, dropCaches, hitTest, layerCorners, layerMatrix, renderDoc, onFontsChanged, sourceSize } from '../engine/render';
 import {
   CutoutStroke,
   cutoutApply,
@@ -14,8 +14,10 @@ import {
   cutoutRefineCanvas,
   cutoutSessionLayerId,
 } from '../cutout';
-import { Stroke, type StrokeMode } from '../engine/brush';
-import { addImages, createSwirl } from '../actions';
+import { CloneStroke, Stroke, type StrokeMode } from '../engine/brush';
+import { addImages, createSwirl, ensureDodgeLayer, layerBox } from '../actions';
+import { meshGrid } from '../engine/mesh';
+import { finishHeal, removePending, runRemove } from '../retouch';
 import { addShape, drawAnts, ellipsePts, polyArea, rectPts, selectionMaskForLayer, simplify, type Pt } from '../engine/selection';
 import { SWIRL_PRESETS } from '../engine/types';
 
@@ -27,7 +29,10 @@ interface View {
 
 type Gesture =
   | { kind: 'pan'; sx: number; sy: number; px: number; py: number }
-  | { kind: 'move'; key: string; dx: number; dy: number; id: string }
+  | { kind: 'move'; key: string; dx: number; dy: number; id: string; box: { x0: number; y0: number; x1: number; y1: number }; targets: { xs: number[]; ys: number[] } }
+  | { kind: 'meshPt'; key: string; id: string; index: number }
+  | { kind: 'clone'; stroke: CloneStroke; layerId: string; heal: boolean; radius: number }
+  | { kind: 'removePaint'; stroke: Stroke; coverage: HTMLCanvasElement; layerId: string }
   | { kind: 'scale'; key: string; id: string; cx: number; cy: number; d0: number; s0: number }
   | { kind: 'rotate'; key: string; id: string; cx: number; cy: number; a0: number; r0: number }
   | { kind: 'stroke'; stroke: Stroke; layerId: string; target: 'canvas' | 'mask' }
@@ -64,6 +69,8 @@ export default function Viewport() {
   const checker = useRef<CanvasPattern | null>(null);
   /** In-progress polygon selection (click to add points). */
   const polyDraft = useRef<{ pts: Pt[]; op: SelOp } | null>(null);
+  /** Snap lines to draw while moving a layer (document pixels). */
+  const snapGuides = useRef<{ xs: number[]; ys: number[] } | null>(null);
 
   const doc = useStore((s) => s.doc);
   const rev = useStore((s) => s.rev);
@@ -113,7 +120,7 @@ export default function Viewport() {
 
       // overlay
       const sel = d.layers.find((l) => l.id === st.selectedId);
-      if (sel && st.tool === 'move' && sel.kind !== 'adjust' && sel.visible) {
+      if (sel && st.tool === 'move' && st.transformMode === 'free' && sel.kind !== 'adjust' && sel.visible) {
         const pts = layerCorners(sel, d).map((p) => ({ x: panX + p.x * zoom, y: panY + p.y * zoom }));
         ctx.strokeStyle = '#b98aff';
         ctx.lineWidth = 1.5;
@@ -137,9 +144,73 @@ export default function Viewport() {
         ctx.fill();
         ctx.stroke();
       }
+      if (sel && st.tool === 'move' && st.transformMode !== 'free' && sel.mesh && sel.kind !== 'adjust') drawMeshHandles(ctx, d, sel, { zoom, panX, panY });
+      const guides = snapGuides.current;
+      if (guides && gesture.current?.kind === 'move') {
+        ctx.save();
+        ctx.strokeStyle = '#ff3df2';
+        ctx.lineWidth = 1;
+        for (const gx of guides.xs) {
+          ctx.beginPath();
+          ctx.moveTo(panX + gx * zoom, panY);
+          ctx.lineTo(panX + gx * zoom, panY + h);
+          ctx.stroke();
+        }
+        for (const gy of guides.ys) {
+          ctx.beginPath();
+          ctx.moveTo(panX, panY + gy * zoom);
+          ctx.lineTo(panX + w, panY + gy * zoom);
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+      const g0 = gesture.current;
+      const covLayerId = g0?.kind === 'removePaint' ? g0.layerId : removePending.canvas ? removePending.layerId : null;
+      const covCanvas = g0?.kind === 'removePaint' ? g0.coverage : removePending.canvas;
+      const covLayer = covLayerId ? d.layers.find((l) => l.id === covLayerId) : null;
+      if (covLayer && covCanvas) {
+        const { w: lw, h: lh } = sourceSize(covLayer, d);
+        ctx.save();
+        ctx.setTransform(ctx.getTransform().translate(panX, panY).scale(zoom, zoom).multiply(layerMatrix(covLayer, lw, lh)));
+        ctx.globalAlpha = 0.5;
+        ctx.drawImage(covCanvas, 0, 0, lw, lh);
+        ctx.restore();
+      }
+      if ((st.tool === 'clone' || st.tool === 'heal') && st.retouch.source) {
+        const sl = d.layers.find((l) => l.id === st.retouch.source!.layerId);
+        if (sl) {
+          const { w: lw, h: lh } = sourceSize(sl, d);
+          const m = layerMatrix(sl, lw, lh);
+          let sp = { x: st.retouch.source.x, y: st.retouch.source.y };
+          if (g0?.kind === 'clone' && pointer.current.inside) {
+            const cur = docToLocal(sl, d, (pointer.current.x - panX) / zoom, (pointer.current.y - panY) / zoom);
+            sp = { x: cur.x + g0.stroke.ox, y: cur.y + g0.stroke.oy };
+          }
+          const q = m.transformPoint(new DOMPoint(sp.x, sp.y));
+          const sx = panX + q.x * zoom;
+          const sy = panY + q.y * zoom;
+          ctx.save();
+          ctx.lineWidth = 1.5;
+          for (const [col, wd] of [
+            ['#000', 3],
+            ['#fff', 1.5],
+          ] as const) {
+            ctx.strokeStyle = col;
+            ctx.lineWidth = wd;
+            ctx.beginPath();
+            ctx.moveTo(sx - 9, sy);
+            ctx.lineTo(sx + 9, sy);
+            ctx.moveTo(sx, sy - 9);
+            ctx.lineTo(sx, sy + 9);
+            ctx.stroke();
+          }
+          ctx.restore();
+        }
+      }
       const cutBrush = st.tool === 'cutout' && st.cutout.mode !== 'pick';
       if (st.tool === 'cutout') drawCutoutOverlay(ctx, d, st.cutout.points, { zoom, panX, panY }, gesture.current);
-      if ((st.tool === 'brush' || st.tool === 'eraser' || cutBrush) && pointer.current.inside) {
+      const retouchBrush = st.tool === 'dodge' || st.tool === 'clone' || st.tool === 'heal' || st.tool === 'remove';
+      if ((st.tool === 'brush' || st.tool === 'eraser' || cutBrush || retouchBrush) && pointer.current.inside) {
         const r = ((cutBrush ? st.cutout.brush : st.brush.size) / 2) * zoom;
         ctx.lineWidth = 1;
         ctx.strokeStyle = 'rgba(0,0,0,0.8)';
@@ -304,9 +375,10 @@ export default function Viewport() {
     recomposite();
   }, [rev, doc, previewHQ, showMask, selectedId, tool, cutView, recomposite]);
 
+  const tMode = useStore((s) => s.transformMode);
   useEffect(() => {
     blit();
-  }, [tool, brushSize, selection, blit]);
+  }, [tool, brushSize, selection, tMode, blit]);
 
   // animate marching ants while something is selected
   useEffect(() => {
@@ -423,7 +495,14 @@ export default function Viewport() {
 
     if (st.tool === 'move') {
       let sel = d.layers.find((l) => l.id === st.selectedId) ?? null;
-      if (sel && sel.kind !== 'adjust' && sel.visible) {
+      if (sel && st.transformMode !== 'free' && sel.mesh && sel.kind !== 'adjust') {
+        const idx = meshHandleAt(d, sel, p, v);
+        if (idx >= 0) {
+          gesture.current = { kind: 'meshPt', key: gkey, id: sel.id, index: idx };
+          return;
+        }
+      }
+      if (sel && st.transformMode === 'free' && sel.kind !== 'adjust' && sel.visible) {
         const pts = layerCorners(sel, d).map((q) => ({ x: v.panX + q.x * v.zoom, y: v.panY + q.y * v.zoom }));
         const rot = rotateHandle(pts);
         const c = { x: sel.x, y: sel.y };
@@ -444,7 +523,24 @@ export default function Viewport() {
         }
       }
       if (sel && sel.kind !== 'adjust') {
-        gesture.current = { kind: 'move', key: gkey, id: sel.id, dx: dp.x - sel.x, dy: dp.y - sel.y };
+        const b = layerBox(sel, d);
+        const xs = [0, d.width / 2, d.width];
+        const ys = [0, d.height / 2, d.height];
+        for (const o of d.layers) {
+          if (o.id === sel.id || !o.visible || o.kind === 'adjust' || o.kind === 'fill') continue;
+          const ob = layerBox(o, d);
+          xs.push(ob.x0, (ob.x0 + ob.x1) / 2, ob.x1);
+          ys.push(ob.y0, (ob.y0 + ob.y1) / 2, ob.y1);
+        }
+        gesture.current = {
+          kind: 'move',
+          key: gkey,
+          id: sel.id,
+          dx: dp.x - sel.x,
+          dy: dp.y - sel.y,
+          box: { x0: b.x0 - sel.x, y0: b.y0 - sel.y, x1: b.x1 - sel.x, y1: b.y1 - sel.y },
+          targets: { xs, ys },
+        };
       }
       return;
     }
@@ -490,6 +586,71 @@ export default function Viewport() {
       return;
     }
 
+    if (st.tool === 'dodge') {
+      const sel = d.layers.find((l) => l.id === st.selectedId);
+      if (!sel || sel.kind === 'adjust') {
+        store.toast('Select the layer you want to light or shade');
+        return;
+      }
+      const dl = ensureDodgeLayer(sel.id);
+      if (!dl?.canvas) {
+        store.toast('Dodge & Burn works on image, text and shape layers');
+        return;
+      }
+      const lp = docToLocal(dl, d, dp.x, dp.y);
+      const diameter = st.brush.size / Math.max(0.001, dl.scale);
+      const color = st.retouch.dodgeMode === 'dodge' ? '#ffffff' : '#000000';
+      const clip = st.selection ? selectionMaskForLayer(st.selection, dl, d, st.feather) : null;
+      const stroke = new Stroke(dl.canvas, 'paint', color, diameter, Math.min(st.brush.hardness, 40), st.retouch.strength, clip);
+      stroke.to(lp.x, lp.y);
+      gesture.current = { kind: 'stroke', stroke, layerId: dl.id, target: 'canvas' };
+      dl.version++;
+      recomposite();
+      return;
+    }
+
+    if (st.tool === 'clone' || st.tool === 'heal' || st.tool === 'remove') {
+      const sel = d.layers.find((l) => l.id === st.selectedId);
+      if (!sel || sel.kind !== 'image' || !sel.canvas) {
+        store.toast(sel && sel.kind !== 'image' ? 'Rasterize this layer first to retouch its pixels' : 'Select the photo layer to retouch');
+        return;
+      }
+      const lp = docToLocal(sel, d, dp.x, dp.y);
+      const diameter = st.brush.size / Math.max(0.001, sel.scale);
+      if (st.tool === 'remove') {
+        const coverage = createCanvas(sel.canvas.width, sel.canvas.height);
+        const stroke = new Stroke(coverage, 'paint', '#ff2d55', diameter, 85, 100);
+        stroke.to(lp.x, lp.y);
+        gesture.current = { kind: 'removePaint', stroke, coverage, layerId: sel.id };
+        blit();
+        return;
+      }
+      if (e.altKey) {
+        store.set({ retouch: { ...st.retouch, source: { layerId: sel.id, x: lp.x, y: lp.y }, offset: null } });
+        store.toast('Source set — now paint over the spot to fix');
+        blit();
+        return;
+      }
+      const src = st.retouch.source;
+      if (!src || src.layerId !== sel.id) {
+        store.toast('Alt+click a clean spot first to pick where to copy from');
+        return;
+      }
+      let off = st.retouch.offset;
+      if (!off || off.layerId !== sel.id || !st.retouch.aligned) {
+        off = { layerId: sel.id, ox: src.x - lp.x, oy: src.y - lp.y };
+        store.set({ retouch: { ...st.retouch, offset: off } });
+      }
+      const snapshot = createCanvas(sel.canvas.width, sel.canvas.height);
+      snapshot.getContext('2d')!.drawImage(sel.canvas, 0, 0);
+      const stroke = new CloneStroke(sel.canvas, snapshot, off.ox, off.oy, diameter, st.brush.hardness, st.brush.opacity);
+      stroke.to(lp.x, lp.y);
+      gesture.current = { kind: 'clone', stroke, layerId: sel.id, heal: st.tool === 'heal', radius: diameter / 2 };
+      sel.version++;
+      recomposite();
+      return;
+    }
+
     if (st.tool === 'brush' || st.tool === 'eraser') {
       const sel = d.layers.find((l) => l.id === st.selectedId);
       if (!sel) {
@@ -526,7 +687,7 @@ export default function Viewport() {
     const st = store.state;
     const d = st.doc;
     if (!g || !d) {
-      if (st.tool === 'brush' || st.tool === 'eraser' || st.tool === 'cutout' || polyDraft.current) blit();
+      if (st.tool === 'brush' || st.tool === 'eraser' || st.tool === 'cutout' || st.tool === 'dodge' || st.tool === 'clone' || st.tool === 'heal' || st.tool === 'remove' || polyDraft.current) blit();
       return;
     }
     const dp = toDoc(p.x, p.y);
@@ -539,11 +700,23 @@ export default function Viewport() {
       case 'move': {
         let nx = dp.x - g.dx;
         let ny = dp.y - g.dy;
-        if (e.shiftKey) {
-          // snap center to canvas center lines
-          const snap = 12 / view.current.zoom;
-          if (Math.abs(nx - d.width / 2) < snap) nx = d.width / 2;
-          if (Math.abs(ny - d.height / 2) < snap) ny = d.height / 2;
+        snapGuides.current = null;
+        if (st.snap && !(e.ctrlKey || e.metaKey)) {
+          // snap the layer's left/center/right and top/middle/bottom to the page and other layers
+          const tol = 8 / view.current.zoom;
+          const snapAxis = (edges: number[], targets: number[]) => {
+            let best: { d: number; line: number } | null = null;
+            for (const e0 of edges) for (const t of targets) {
+              const dd = t - e0;
+              if (Math.abs(dd) <= tol && (!best || Math.abs(dd) < Math.abs(best.d))) best = { d: dd, line: t };
+            }
+            return best;
+          };
+          const bx = snapAxis([nx + g.box.x0, nx + (g.box.x0 + g.box.x1) / 2, nx + g.box.x1], g.targets.xs);
+          const by = snapAxis([ny + g.box.y0, ny + (g.box.y0 + g.box.y1) / 2, ny + g.box.y1], g.targets.ys);
+          if (bx) nx += bx.d;
+          if (by) ny += by.d;
+          if (bx || by) snapGuides.current = { xs: bx ? [bx.line] : [], ys: by ? [by.line] : [] };
         }
         store.updateLayer(g.id, (l) => {
           l.x = nx;
@@ -573,6 +746,45 @@ export default function Viewport() {
         g.end = dp;
         const last = g.pts[g.pts.length - 1];
         if (Math.hypot(dp.x - last.x, dp.y - last.y) * view.current.zoom >= 2) g.pts.push(dp);
+        blit();
+        break;
+      }
+      case 'meshPt': {
+        const l = d.layers.find((x) => x.id === g.id);
+        if (!l?.mesh) break;
+        const { w: lw, h: lh } = sourceSize(l, d);
+        const lp = docToLocal(l, d, dp.x, dp.y);
+        const u = lp.x / lw;
+        const vv = lp.y / lh;
+        store.updateLayer(g.id, (x) => {
+          if (x.mesh) x.mesh.pts[g.index] = [u, vv];
+        }, l.mesh.kind === 'distort' ? 'Distort' : 'Warp', g.key);
+        break;
+      }
+      case 'clone': {
+        const target = d.layers.find((l) => l.id === g.layerId);
+        if (!target) break;
+        const events = (e.nativeEvent as PointerEvent).getCoalescedEvents?.() ?? [e.nativeEvent];
+        const r = wrapRef.current!.getBoundingClientRect();
+        for (const ev of events) {
+          const q = toDoc(ev.clientX - r.left, ev.clientY - r.top);
+          const lp = docToLocal(target, d, q.x, q.y);
+          g.stroke.to(lp.x, lp.y);
+        }
+        target.version++;
+        recomposite();
+        break;
+      }
+      case 'removePaint': {
+        const target = d.layers.find((l) => l.id === g.layerId);
+        if (!target) break;
+        const events = (e.nativeEvent as PointerEvent).getCoalescedEvents?.() ?? [e.nativeEvent];
+        const r = wrapRef.current!.getBoundingClientRect();
+        for (const ev of events) {
+          const q = toDoc(ev.clientX - r.left, ev.clientY - r.top);
+          const lp = docToLocal(target, d, q.x, q.y);
+          g.stroke.to(lp.x, lp.y);
+        }
         blit();
         break;
       }
@@ -673,6 +885,24 @@ export default function Viewport() {
         const lp = docToLocal(target, d, g.start.x, g.start.y);
         cutoutPickPoint(lp, g.alt ? 0 : 1, g.alt || g.shift);
       }
+      blit();
+      return;
+    }
+    if (g?.kind === 'move' && snapGuides.current) {
+      snapGuides.current = null;
+      blit();
+    }
+    if (g?.kind === 'clone') {
+      const patch = g.heal ? finishHeal(g.layerId, g.stroke, Math.max(4, g.radius)) : g.stroke.finish();
+      if (patch) {
+        dropCaches(g.layerId);
+        store.pushPixels(g.layerId, 'canvas', patch, g.heal ? 'Heal' : 'Clone');
+      }
+      return;
+    }
+    if (g?.kind === 'removePaint') {
+      g.stroke.finish();
+      runRemove(g.layerId, g.coverage);
       blit();
       return;
     }
@@ -846,4 +1076,90 @@ function drawCutoutOverlay(
     ctx.strokeRect(Math.min(a.x, b.x), Math.min(a.y, b.y), Math.abs(b.x - a.x), Math.abs(b.y - a.y));
     ctx.restore();
   }
+}
+
+/** Screen positions of a layer's distort/warp control points. */
+function meshHandlePoints(d: Doc, l: Layer, v: { zoom: number; panX: number; panY: number }) {
+  const { w, h } = sourceSize(l, d);
+  const m = layerMatrix(l, w, h);
+  return l.mesh!.pts.map(([u, vv]) => {
+    const q = m.transformPoint(new DOMPoint(u * w, vv * h));
+    return { x: v.panX + q.x * v.zoom, y: v.panY + q.y * v.zoom };
+  });
+}
+
+function meshHandleAt(d: Doc, l: Layer, p: { x: number; y: number }, v: { zoom: number; panX: number; panY: number }): number {
+  const pts = meshHandlePoints(d, l, v);
+  let best = -1;
+  let bd = 12;
+  pts.forEach((q, i) => {
+    const dd = Math.hypot(q.x - p.x, q.y - p.y);
+    if (dd < bd) {
+      bd = dd;
+      best = i;
+    }
+  });
+  return best;
+}
+
+function drawMeshHandles(ctx: CanvasRenderingContext2D, d: Doc, l: Layer, v: { zoom: number; panX: number; panY: number }) {
+  const { w, h } = sourceSize(l, d);
+  const m = layerMatrix(l, w, h);
+  const toS = (u: number, vv: number) => {
+    const q = m.transformPoint(new DOMPoint(u * w, vv * h));
+    return { x: v.panX + q.x * v.zoom, y: v.panY + q.y * v.zoom };
+  };
+  ctx.save();
+  ctx.strokeStyle = 'rgba(185,138,255,0.85)';
+  ctx.lineWidth = 1;
+  // outline of the bent shape plus a light grid
+  const n = 8;
+  const grid = meshGrid(l.mesh!, n);
+  for (let j = 0; j <= n; j++) {
+    ctx.beginPath();
+    for (let i = 0; i <= n; i++) {
+      const s = toS(...grid[j * (n + 1) + i]);
+      if (i) ctx.lineTo(s.x, s.y);
+      else ctx.moveTo(s.x, s.y);
+    }
+    ctx.globalAlpha = j === 0 || j === n ? 1 : 0.35;
+    ctx.stroke();
+  }
+  for (let i = 0; i <= n; i++) {
+    ctx.beginPath();
+    for (let j = 0; j <= n; j++) {
+      const s = toS(...grid[j * (n + 1) + i]);
+      if (j) ctx.lineTo(s.x, s.y);
+      else ctx.moveTo(s.x, s.y);
+    }
+    ctx.globalAlpha = i === 0 || i === n ? 1 : 0.35;
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+  const pts = meshHandlePoints(d, l, v);
+  if (l.mesh!.kind === 'warp') {
+    // bezier handle lines
+    ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+    ctx.setLineDash([3, 3]);
+    for (let r = 0; r < 4; r++) {
+      ctx.beginPath();
+      for (let c = 0; c < 4; c++) {
+        const q = pts[r * 4 + c];
+        if (c) ctx.lineTo(q.x, q.y);
+        else ctx.moveTo(q.x, q.y);
+      }
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
+  }
+  ctx.fillStyle = '#fff';
+  ctx.strokeStyle = '#7c3aed';
+  ctx.lineWidth = 2;
+  for (const q of pts) {
+    ctx.beginPath();
+    ctx.arc(q.x, q.y, 5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  }
+  ctx.restore();
 }

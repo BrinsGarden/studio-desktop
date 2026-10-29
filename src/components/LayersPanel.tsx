@@ -14,6 +14,7 @@ import {
   moveLayer,
   nudgeLayer,
   openImagesDialog,
+  toggleClip,
 } from '../actions';
 
 function Thumb({ layer, doc, which, rev }: { layer: Layer; doc: Doc; which: 'source' | 'mask'; rev: number }) {
@@ -57,6 +58,9 @@ export default function LayersPanel() {
           <button type="button" className="icon-btn" title="Move layer down (Ctrl+[)" aria-label="Move layer down" onClick={() => nudgeLayer(-1)} disabled={!selectedId}>
             <Icon name="down" size={16} />
           </button>
+          <button type="button" className="icon-btn" title="Clip to layer below (Ctrl+Alt+G)" aria-label="Clip to layer below" onClick={() => toggleClip()} disabled={!selectedId}>
+            <Icon name="clip" size={16} />
+          </button>
           <button type="button" className="icon-btn" title="Duplicate (Ctrl+J)" aria-label="Duplicate layer" onClick={() => duplicateLayer()} disabled={!selectedId}>
             <Icon name="copy" size={16} />
           </button>
@@ -75,7 +79,8 @@ export default function LayersPanel() {
               key={l.id}
               role="option"
               aria-selected={selected}
-              className={`layer-row ${selected ? 'selected' : ''} ${dropIdx === realIdx && dragId ? 'drop' : ''}`}
+              className={`layer-row ${selected ? 'selected' : ''} ${l.clip && realIdx > 0 ? 'clipped' : ''} ${dropIdx === realIdx && dragId ? 'drop' : ''}`}
+              title={l.clip && realIdx > 0 ? `Clipped to ${doc.layers[realIdx - 1]?.name}` : undefined}
               draggable={renaming !== l.id}
               onDragStart={(e) => {
                 setDragId(l.id);
