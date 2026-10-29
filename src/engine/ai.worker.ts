@@ -47,6 +47,8 @@ const MATTE: Record<Quality, { id: string; label: string; gpu: string; cpu: stri
 const SAM_ID = 'Xenova/slimsam-77-uniform';
 
 let device: 'webgpu' | 'wasm' | null = null;
+/** Whether the graphics card can run half-precision (smaller, faster) models. */
+let gpuF16 = false;
 let img: Img | null = null;
 const matteModels = new Map<string, Promise<AnyModel>>();
 let sam: { model: AnyModel; processor: AnyModel } | null = null;
@@ -99,6 +101,7 @@ async function detectDevice(): Promise<'webgpu' | 'wasm'> {
     const gpu = (navigator as any).gpu;
     const adapter = gpu ? await gpu.requestAdapter() : null;
     device = adapter ? 'webgpu' : 'wasm';
+    gpuF16 = !!adapter?.features?.has?.('shader-f16');
   } catch {
     device = 'wasm';
   }
@@ -108,7 +111,7 @@ async function detectDevice(): Promise<'webgpu' | 'wasm'> {
 function loadMatte(id: number, q: Quality, dtypeOverride?: string): Promise<AnyModel> {
   const spec = MATTE[q];
   const dev = device!;
-  const dtype = dtypeOverride ?? (dev === 'webgpu' ? spec.gpu : spec.cpu);
+  const dtype = dtypeOverride ?? (dev === 'webgpu' ? (gpuF16 ? spec.gpu : 'fp32') : spec.cpu);
   if (!dtype) throw new Error('Max quality needs a graphics card with WebGPU. Use Best instead.');
   const key = `${q}|${dev}|${dtype}`;
   let p = matteModels.get(key);
@@ -294,7 +297,7 @@ async function matteRect(id: number, q: Quality, roi: Rect): Promise<{ coarse: F
     res = await run(model);
   } catch (err) {
     // half-precision models occasionally produce garbage on some GPUs — retry in full precision
-    if (device === 'webgpu' && String(err).includes('degenerate')) {
+    if (device === 'webgpu' && /degenerate|fp16|float16/i.test(String(err))) {
       post({ type: 'progress', id, text: 'Retrying in full precision…', progress: null });
       model = await loadMatte(id, q, 'fp32');
       res = await run(model);

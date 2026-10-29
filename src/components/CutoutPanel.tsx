@@ -61,9 +61,9 @@ export default function CutoutPanel() {
         <label className="field inline">
           <span>Quality</span>
           <select value={cut.quality} disabled={working} onChange={(e) => set({ quality: e.target.value as typeof cut.quality })}>
-            <option value="fast">Fast (45–90 MB)</option>
-            <option value="best">Best (115 MB)</option>
-            <option value="max">Max — people (490 MB, GPU)</option>
+            <option value="fast">Fast (smaller download)</option>
+            <option value="best">Best</option>
+            <option value="max">Max — people (0.5–1 GB, GPU only)</option>
           </select>
         </label>
       </div>
