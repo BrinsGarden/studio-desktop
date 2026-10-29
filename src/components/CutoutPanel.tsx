@@ -71,13 +71,14 @@ export default function CutoutPanel() {
       {cut.hasResult && (
         <>
           <div className="cutout-sliders">
+            <Slider label="Solid inside" value={cut.edges.solid ?? 60} min={0} max={100} unit="%" defaultValue={60} onChange={(v) => setCutoutEdges({ solid: v })} />
             <Slider label="Smart edge" value={cut.edges.edgeRadius} min={0} max={40} unit="px" defaultValue={0} onChange={(v) => setCutoutEdges({ edgeRadius: v })} />
             <Slider label="Shift edge" value={cut.edges.shift} min={-20} max={20} unit="px" defaultValue={0} onChange={(v) => setCutoutEdges({ shift: v })} />
             <Slider label="Smooth" value={cut.edges.smooth} min={0} max={20} defaultValue={0} onChange={(v) => setCutoutEdges({ smooth: v })} />
             <Slider label="Feather" value={cut.edges.feather} min={0} max={30} unit="px" defaultValue={0} onChange={(v) => setCutoutEdges({ feather: v })} />
             <Slider label="Contrast" value={cut.edges.contrast} min={0} max={100} unit="%" defaultValue={0} onChange={(v) => setCutoutEdges({ contrast: v })} />
           </div>
-          <p className="hint">Smart edge re-solves fuzzy edges from the photo's colors. Raise it for hair and feathers; leave it at 0 for clean edges.</p>
+          <p className="hint">Solid inside stops see-through patches on the person (white clothes, pale skin, gloves) and fills small holes. Lower it for see-through things like hoop skirts or lace. Smart edge re-solves fuzzy edges from the photo's colors. Raise it for hair and feathers; leave it at 0 for clean edges.</p>
           <label className="check">
             <input type="checkbox" checked={cut.decontam} onChange={(e) => set({ decontam: e.target.checked })} />
             Decontaminate colors (removes the old background's color from hair and edges)

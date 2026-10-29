@@ -11,6 +11,7 @@ import {
   boxBlur,
   estimateForeground,
   expandRect,
+  fillHoles,
   floatToHalf,
   halfToFloat,
   morph,
@@ -378,9 +379,11 @@ async function buildBase(id: number, q: Quality, roi: Rect, samMask: { soft: Flo
     // keep only what's near the object SAM found; the matte decides the fine edge
     const { soft, w: sw, h: sh, scale } = samMask;
     const bin = new Float32Array(sw * sh);
-    for (let i = 0; i < bin.length; i++) bin[i] = soft[i] >= 0.5 ? 1 : 0;
-    const r = Math.max(3, Math.round(0.03 * Math.max(sw, sh)));
-    const gate = boxBlur(morph(bin, sw, sh, r, true), sw, sh, Math.ceil(r / 2));
+    for (let i = 0; i < bin.length; i++) bin[i] = soft[i] >= 0.35 ? 1 : 0;
+    // the object finder often misses patches inside a person (white clothing, pale skin) or a limb;
+    // the gate only needs to keep other objects out, so fill its holes and grow it generously
+    const r = Math.max(4, Math.round(0.06 * Math.max(sw, sh)));
+    const gate = boxBlur(morph(fillHoles(bin, sw, sh), sw, sh, r, true), sw, sh, Math.ceil(r / 2));
     // sample gate into work-rect pixels
     const gx0 = wr!.x * scale;
     const gy0 = wr!.y * scale;

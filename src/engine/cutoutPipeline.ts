@@ -7,6 +7,7 @@ import {
   resizeBilinear,
   shiftEdge,
   smoothEdge,
+  solidInside,
   type Planes,
 } from './matte';
 
@@ -24,9 +25,11 @@ export interface EdgeSettings {
   shift: number;
   /** Radius of the largest Refine-edge brush used, so colour samples reach past it. */
   refineBrush: number;
+  /** 0..100 — makes the inside of the subject fully opaque and fills small holes. */
+  solid: number;
 }
 
-export const DEFAULT_EDGES: EdgeSettings = { edgeRadius: 0, smooth: 0, feather: 0, contrast: 0, shift: 0, refineBrush: 0 };
+export const DEFAULT_EDGES: EdgeSettings = { edgeRadius: 0, smooth: 0, feather: 0, contrast: 0, shift: 0, refineBrush: 0, solid: 60 };
 
 /**
  * Turn a model's low-resolution matte into a full-resolution one that follows the photo's real edges.
@@ -57,7 +60,7 @@ export function refineMatte(I: Planes, base: Float32Array, w: number, h: number,
 }
 
 export function adjustEdges(alpha: Float32Array, w: number, h: number, s: EdgeSettings): Float32Array {
-  let a = alpha;
+  let a = solidInside(alpha, w, h, s.solid ?? 0);
   a = shiftEdge(a, w, h, s.shift);
   a = smoothEdge(a, w, h, s.smooth);
   a = featherEdge(a, w, h, s.feather);

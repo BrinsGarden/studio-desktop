@@ -178,3 +178,26 @@ describe('misc', () => {
     expect(expandRect({ x: 5, y: 5, w: 10, h: 10 }, 10, 18, 30)).toEqual({ x: 0, y: 0, w: 18, h: 25 });
   });
 });
+
+import { solidInside as solidIn } from './matte';
+describe('solid inside', () => {
+  it('fills see-through patches and small holes inside the subject, keeps big gaps and soft edges', () => {
+    const w = 200;
+    const h = 200;
+    const a = new Float32Array(w * h);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const d = Math.hypot(x - 100, y - 100);
+      a[y * w + x] = d < 80 ? 1 : d < 84 ? (84 - d) / 4 : 0;
+    }
+    const at = (x: number, y: number) => y * w + x;
+    for (let y = 90; y < 100; y++) for (let x = 60; x < 70; x++) a[at(x, y)] = 0.3; // faint patch (pale corset)
+    for (let y = 120; y < 124; y++) for (let x = 100; x < 104; x++) a[at(x, y)] = 0; // tiny hole
+    for (let y = 70; y < 130; y++) for (let x = 110; x < 170; x++) if (x > 115 && x < 165 && y > 75 && y < 125) a[at(x, y)] = 0; // big gap
+    const o = solidIn(a, w, h, 60);
+    expect(o[at(65, 95)]).toBeGreaterThan(0.95);
+    expect(o[at(102, 122)]).toBeGreaterThan(0.95);
+    expect(o[at(140, 100)]).toBeLessThan(0.05);
+    expect(o[at(100, 182)]).toBeCloseTo(a[at(100, 182)], 2); // soft rim untouched
+    expect(solidIn(a, w, h, 0)).toBe(a);
+  });
+});

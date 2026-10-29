@@ -563,3 +563,131 @@ export function expandRect(r: Rect, m: number, w: number, h: number): Rect {
   const y2 = Math.min(h, Math.ceil(r.y + r.h + m));
   return { x, y, w: Math.max(1, x2 - x), h: Math.max(1, y2 - y) };
 }
+
+/**
+ * "Solid inside": the matting model sometimes leaves see-through patches inside a person where
+ * clothing or skin is close in colour to the background (white corsets, pale legs, gloves).
+ * Anything well inside the subject's outline is made fully opaque, and small enclosed holes are filled;
+ * the outer edge (hair, fringe) keeps its soft matte. `amount` 0..100, 0 = off.
+ */
+export function solidInside(alpha: Float32Array, w: number, h: number, amount: number): Float32Array {
+  if (amount <= 0) return alpha;
+  const k = Math.min(1, amount / 100);
+  const n = w * h;
+  const thr = 0.5 - 0.4 * k;
+  // 1. subject = confidently-ish foreground
+  const fg = new Uint8Array(n);
+  let area = 0;
+  let x0 = w;
+  let y0 = h;
+  let x1 = 0;
+  let y1 = 0;
+  for (let i = 0; i < n; i++) {
+    if (alpha[i] > thr) {
+      fg[i] = 1;
+      area++;
+      const x = i % w;
+      const y = (i / w) | 0;
+      if (x < x0) x0 = x;
+      if (x > x1) x1 = x;
+      if (y < y0) y0 = y;
+      if (y > y1) y1 = y;
+    }
+  }
+  if (!area) return alpha;
+  // 2. background reachable from the border (4-connected flood fill)
+  const outside = new Uint8Array(n);
+  const stack = new Int32Array(n);
+  let sp = 0;
+  const seed = (i: number) => {
+    if (!fg[i] && !outside[i]) {
+      outside[i] = 1;
+      stack[sp++] = i;
+    }
+  };
+  for (let x = 0; x < w; x++) {
+    seed(x);
+    seed((h - 1) * w + x);
+  }
+  for (let y = 0; y < h; y++) {
+    seed(y * w);
+    seed(y * w + w - 1);
+  }
+  while (sp) {
+    const i = stack[--sp];
+    const x = i % w;
+    if (x > 0) seed(i - 1);
+    if (x < w - 1) seed(i + 1);
+    if (i >= w) seed(i - w);
+    if (i < n - w) seed(i + w);
+  }
+  // 3. enclosed holes: fill the small ones (big ones are real gaps, e.g. between arm and body)
+  const solid = new Float32Array(n);
+  for (let i = 0; i < n; i++) solid[i] = fg[i];
+  const maxHole = area * 0.04 * k;
+  const seen = new Uint8Array(n);
+  const comp: number[] = [];
+  for (let i = 0; i < n; i++) {
+    if (fg[i] || outside[i] || seen[i]) continue;
+    comp.length = 0;
+    seen[i] = 1;
+    stack[0] = i;
+    sp = 1;
+    while (sp) {
+      const j = stack[--sp];
+      comp.push(j);
+      const x = j % w;
+      const nb = [x > 0 ? j - 1 : -1, x < w - 1 ? j + 1 : -1, j >= w ? j - w : -1, j < n - w ? j + w : -1];
+      for (const q of nb) {
+        if (q >= 0 && !fg[q] && !outside[q] && !seen[q]) {
+          seen[q] = 1;
+          stack[sp++] = q;
+        }
+      }
+    }
+    if (comp.length <= maxHole) for (const j of comp) solid[j] = 1;
+  }
+  // 4. core = solid region shrunk away from the outline; soft ramp so there's no seam
+  const diag = Math.hypot(x1 - x0, y1 - y0);
+  const r = Math.max(3, Math.round(diag * 0.012));
+  const core = boxBlur(morph(solid, w, h, r, false), w, h, Math.ceil(r / 2));
+  const out = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const c = Math.min(1, core[i] * 1.25);
+    out[i] = alpha[i] > c ? alpha[i] : c;
+  }
+  return out;
+}
+
+/** Fill every region of a 0/1 mask that isn't connected to the image border (holes inside the object). */
+export function fillHoles(bin: Float32Array, w: number, h: number): Float32Array {
+  const n = w * h;
+  const outside = new Uint8Array(n);
+  const stack = new Int32Array(n);
+  let sp = 0;
+  const seed = (i: number) => {
+    if (bin[i] < 0.5 && !outside[i]) {
+      outside[i] = 1;
+      stack[sp++] = i;
+    }
+  };
+  for (let x = 0; x < w; x++) {
+    seed(x);
+    seed((h - 1) * w + x);
+  }
+  for (let y = 0; y < h; y++) {
+    seed(y * w);
+    seed(y * w + w - 1);
+  }
+  while (sp) {
+    const i = stack[--sp];
+    const x = i % w;
+    if (x > 0) seed(i - 1);
+    if (x < w - 1) seed(i + 1);
+    if (i >= w) seed(i - w);
+    if (i < n - w) seed(i + w);
+  }
+  const out = new Float32Array(n);
+  for (let i = 0; i < n; i++) out[i] = outside[i] ? 0 : 1;
+  return out;
+}
