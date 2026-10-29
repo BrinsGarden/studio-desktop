@@ -1,7 +1,19 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { store, useStore } from '../store';
-import { createCanvas, type Doc, type Layer } from '../engine/types';
-import { docToLocal, hitTest, layerCorners, renderDoc, onFontsChanged } from '../engine/render';
+import { createCanvas, makeLayer, type Doc, type Layer } from '../engine/types';
+import { docToLocal, hitTest, layerCorners, layerMatrix, renderDoc, onFontsChanged, sourceSize } from '../engine/render';
+import {
+  CutoutStroke,
+  cutoutApply,
+  cutoutBeginStroke,
+  cutoutCancel,
+  cutoutHasPreview,
+  cutoutOverlayCanvas,
+  cutoutPickBox,
+  cutoutPickPoint,
+  cutoutRefineCanvas,
+  cutoutSessionLayerId,
+} from '../cutout';
 import { Stroke, type StrokeMode } from '../engine/brush';
 import { addImages, createSwirl } from '../actions';
 import { addShape, drawAnts, ellipsePts, polyArea, rectPts, selectionMaskForLayer, simplify, type Pt } from '../engine/selection';
@@ -20,7 +32,9 @@ type Gesture =
   | { kind: 'rotate'; key: string; id: string; cx: number; cy: number; a0: number; r0: number }
   | { kind: 'stroke'; stroke: Stroke; layerId: string; target: 'canvas' | 'mask' }
   | { kind: 'select'; mode: 'lasso' | 'rect' | 'ellipse'; op: SelOp; start: Pt; pts: Pt[]; end: Pt }
-  | { kind: 'swirl'; pts: Pt[] };
+  | { kind: 'swirl'; pts: Pt[] }
+  | { kind: 'cutPick'; start: Pt; end: Pt; moved: boolean; alt: boolean; shift: boolean }
+  | { kind: 'cutStroke'; stroke: CutoutStroke; layerId: string };
 
 type SelOp = 'new' | 'add' | 'sub';
 
@@ -123,8 +137,10 @@ export default function Viewport() {
         ctx.fill();
         ctx.stroke();
       }
-      if ((st.tool === 'brush' || st.tool === 'eraser') && pointer.current.inside) {
-        const r = (st.brush.size / 2) * zoom;
+      const cutBrush = st.tool === 'cutout' && st.cutout.mode !== 'pick';
+      if (st.tool === 'cutout') drawCutoutOverlay(ctx, d, st.cutout.points, { zoom, panX, panY }, gesture.current);
+      if ((st.tool === 'brush' || st.tool === 'eraser' || cutBrush) && pointer.current.inside) {
+        const r = ((cutBrush ? st.cutout.brush : st.brush.size) / 2) * zoom;
         ctx.lineWidth = 1;
         ctx.strokeStyle = 'rgba(0,0,0,0.8)';
         ctx.beginPath();
@@ -189,10 +205,41 @@ export default function Viewport() {
         comp.width = W;
         comp.height = H;
       }
-      renderDoc(d, comp, comp.width / d.width, {
-        background: true,
-        showMaskOf: st.showMask ? st.selectedId : null,
-      });
+      const cutId = st.tool === 'cutout' ? cutoutSessionLayerId() : null;
+      const cutLayer = cutId && cutoutHasPreview() ? d.layers.find((l) => l.id === cutId) : undefined;
+      if (cutLayer && st.cutout.view !== 'layers') {
+        const view = st.cutout.view;
+        if (view === 'overlay') {
+          const red = cutoutOverlayCanvas();
+          const raw: Layer = { ...cutLayer, id: `${cutLayer.id}#raw`, visible: true };
+          const layers: Layer[] = [raw];
+          if (red) {
+            layers.push(
+              makeLayer('image', 'cutout overlay', {
+                canvas: red,
+                x: cutLayer.x,
+                y: cutLayer.y,
+                scale: cutLayer.scale,
+                rotation: cutLayer.rotation,
+                flipX: cutLayer.flipX,
+                flipY: cutLayer.flipY,
+              }),
+            );
+          }
+          renderDoc({ ...d, layers }, comp, comp.width / d.width, { background: true });
+        } else {
+          renderDoc({ ...d, background: view === 'black' ? '#000000' : '#ffffff', layers: [{ ...cutLayer, visible: true }] }, comp, comp.width / d.width, {
+            background: true,
+            preview: true,
+          });
+        }
+      } else {
+        renderDoc(d, comp, comp.width / d.width, {
+          background: true,
+          showMaskOf: st.showMask ? st.selectedId : null,
+          preview: st.tool === 'cutout',
+        });
+      }
       blit();
     });
   }, [blit]);
@@ -252,9 +299,10 @@ export default function Viewport() {
     }
   }, [doc, fit]);
 
+  const cutView = useStore((s) => s.cutout.view);
   useEffect(() => {
     recomposite();
-  }, [rev, doc, previewHQ, showMask, selectedId, recomposite]);
+  }, [rev, doc, previewHQ, showMask, selectedId, tool, cutView, recomposite]);
 
   useEffect(() => {
     blit();
@@ -278,6 +326,16 @@ export default function Viewport() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (isTyping(e)) return;
+      if (store.state.tool === 'cutout' && cutoutSessionLayerId()) {
+        if (e.key === 'Escape' && store.state.cutout.status !== 'working') {
+          cutoutCancel();
+          return;
+        }
+        if (e.key === 'Enter' && store.state.cutout.hasResult && store.state.cutout.status !== 'working') {
+          cutoutApply(true);
+          return;
+        }
+      }
       if (e.key === 'Escape') {
         if (polyDraft.current) polyDraft.current = null;
         else if (store.state.selection) store.set({ selection: null });
@@ -415,6 +473,23 @@ export default function Viewport() {
       return;
     }
 
+    if (st.tool === 'cutout') {
+      if (st.cutout.mode === 'pick') {
+        gesture.current = { kind: 'cutPick', start: dp, end: dp, moved: false, alt: e.altKey, shift: e.shiftKey };
+        blit();
+        return;
+      }
+      const target = d.layers.find((l) => l.id === (cutoutSessionLayerId() ?? st.selectedId));
+      if (!target) {
+        store.toast('Select the photo layer to cut out');
+        return;
+      }
+      const lp = docToLocal(target, d, dp.x, dp.y);
+      const stroke = cutoutBeginStroke(lp.x, lp.y, st.cutout.brush / Math.max(0.001, target.scale));
+      if (stroke) gesture.current = { kind: 'cutStroke', stroke, layerId: target.id };
+      return;
+    }
+
     if (st.tool === 'brush' || st.tool === 'eraser') {
       const sel = d.layers.find((l) => l.id === st.selectedId);
       if (!sel) {
@@ -451,7 +526,7 @@ export default function Viewport() {
     const st = store.state;
     const d = st.doc;
     if (!g || !d) {
-      if (st.tool === 'brush' || st.tool === 'eraser' || polyDraft.current) blit();
+      if (st.tool === 'brush' || st.tool === 'eraser' || st.tool === 'cutout' || polyDraft.current) blit();
       return;
     }
     const dp = toDoc(p.x, p.y);
@@ -498,6 +573,25 @@ export default function Viewport() {
         g.end = dp;
         const last = g.pts[g.pts.length - 1];
         if (Math.hypot(dp.x - last.x, dp.y - last.y) * view.current.zoom >= 2) g.pts.push(dp);
+        blit();
+        break;
+      }
+      case 'cutPick': {
+        g.end = dp;
+        if (Math.hypot(dp.x - g.start.x, dp.y - g.start.y) * view.current.zoom > 6) g.moved = true;
+        blit();
+        break;
+      }
+      case 'cutStroke': {
+        const target = d.layers.find((l) => l.id === g.layerId);
+        if (!target) break;
+        const events = (e.nativeEvent as PointerEvent).getCoalescedEvents?.() ?? [e.nativeEvent];
+        const r = wrapRef.current!.getBoundingClientRect();
+        for (const ev of events) {
+          const q = toDoc(ev.clientX - r.left, ev.clientY - r.top);
+          const lp = docToLocal(target, d, q.x, q.y);
+          g.stroke.to(lp.x, lp.y);
+        }
         blit();
         break;
       }
@@ -560,6 +654,33 @@ export default function Viewport() {
       blit();
       return;
     }
+    if (g?.kind === 'cutPick') {
+      const d = store.state.doc;
+      const target = d?.layers.find((l) => l.id === (cutoutSessionLayerId() ?? store.state.selectedId));
+      if (!d || !target) {
+        store.toast('Select the photo layer to cut out');
+        blit();
+        return;
+      }
+      if (g.moved) {
+        const corners = [g.start, { x: g.end.x, y: g.start.y }, g.end, { x: g.start.x, y: g.end.y }].map((p) => docToLocal(target, d, p.x, p.y));
+        const xs = corners.map((p) => p.x);
+        const ys = corners.map((p) => p.y);
+        const x0 = Math.min(...xs);
+        const y0 = Math.min(...ys);
+        cutoutPickBox({ x: x0, y: y0, w: Math.max(...xs) - x0, h: Math.max(...ys) - y0 });
+      } else {
+        const lp = docToLocal(target, d, g.start.x, g.start.y);
+        cutoutPickPoint(lp, g.alt ? 0 : 1, g.alt || g.shift);
+      }
+      blit();
+      return;
+    }
+    if (g?.kind === 'cutStroke') {
+      g.stroke.end();
+      blit();
+      return;
+    }
     if (g?.kind === 'stroke') {
       const patch = g.stroke.finish();
       if (patch) store.pushPixels(g.layerId, g.target, patch, g.target === 'mask' ? 'Paint mask' : 'Paint');
@@ -598,8 +719,15 @@ export default function Viewport() {
     addImages(Array.from(e.dataTransfer.files));
   };
 
+  const cutMode = useStore((s) => s.cutout.mode);
   const cursor =
-    tool === 'hand' ? 'grab' : tool === 'move' ? 'move' : tool === 'eyedropper' || tool === 'select' || tool === 'swirl' || tool === 'fire' ? 'crosshair' : 'none';
+    tool === 'hand'
+      ? 'grab'
+      : tool === 'move'
+        ? 'move'
+        : tool === 'eyedropper' || tool === 'select' || tool === 'swirl' || tool === 'fire' || (tool === 'cutout' && cutMode === 'pick')
+          ? 'crosshair'
+          : 'none';
 
   return (
     <div
@@ -659,3 +787,63 @@ function isTyping(e: KeyboardEvent) {
   return t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable);
 }
 
+
+/** Clicked points, the box being dragged, and the refine stroke being painted. */
+function drawCutoutOverlay(
+  ctx: CanvasRenderingContext2D,
+  d: Doc,
+  points: { x: number; y: number; label: 0 | 1 }[],
+  v: { zoom: number; panX: number; panY: number },
+  g: Gesture | null,
+) {
+  const id = cutoutSessionLayerId() ?? store.state.selectedId;
+  const layer = d.layers.find((l) => l.id === id);
+  const toScreen = (p: { x: number; y: number }) => ({ x: v.panX + p.x * v.zoom, y: v.panY + p.y * v.zoom });
+  if (layer && g?.kind === 'cutStroke' && g.stroke.mode === 'refine') {
+    const rc = cutoutRefineCanvas();
+    if (rc) {
+      const { w, h } = sourceSize(layer, d);
+      ctx.save();
+      ctx.setTransform(ctx.getTransform().translate(v.panX, v.panY).scale(v.zoom, v.zoom).multiply(layerMatrix(layer, w, h)));
+      ctx.globalAlpha = 0.45;
+      ctx.drawImage(rc, 0, 0, w, h);
+      ctx.restore();
+    }
+  }
+  if (layer && points.length) {
+    const { w, h } = sourceSize(layer, d);
+    const m = layerMatrix(layer, w, h);
+    for (const p of points) {
+      const q = m.transformPoint(new DOMPoint(p.x, p.y));
+      const s = toScreen(q);
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, 7, 0, Math.PI * 2);
+      ctx.fillStyle = p.label ? '#39d98a' : '#ff4d6d';
+      ctx.fill();
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = '#fff';
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(s.x - 3.5, s.y);
+      ctx.lineTo(s.x + 3.5, s.y);
+      if (p.label) {
+        ctx.moveTo(s.x, s.y - 3.5);
+        ctx.lineTo(s.x, s.y + 3.5);
+      }
+      ctx.stroke();
+    }
+  }
+  if (g?.kind === 'cutPick' && g.moved) {
+    const a = toScreen(g.start);
+    const b = toScreen(g.end);
+    ctx.save();
+    ctx.setLineDash([6, 4]);
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = '#fff';
+    ctx.strokeRect(Math.min(a.x, b.x), Math.min(a.y, b.y), Math.abs(b.x - a.x), Math.abs(b.y - a.y));
+    ctx.strokeStyle = '#000';
+    ctx.lineDashOffset = 5;
+    ctx.strokeRect(Math.min(a.x, b.x), Math.min(a.y, b.y), Math.abs(b.x - a.x), Math.abs(b.y - a.y));
+    ctx.restore();
+  }
+}

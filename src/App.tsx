@@ -4,6 +4,8 @@ import Viewport from './components/Viewport';
 import LayersPanel from './components/LayersPanel';
 import Properties from './components/Properties';
 import NewDocDialog from './components/NewDocDialog';
+import CutoutPanel from './components/CutoutPanel';
+import { cutoutSessionLayerId, cutoutToolActivated, cutoutUndo } from './cutout';
 import { Icon } from './components/icons';
 import { Slider, Segmented } from './components/ui';
 import {
@@ -28,7 +30,8 @@ import { SWIRL_PRESETS, FIRE_PRESETS } from './engine/types';
 
 const TOOLS: { id: Tool; label: string; key: string; icon: string }[] = [
   { id: 'move', label: 'Move & resize', key: 'V', icon: 'move' },
-  { id: 'select', label: 'Select / cut out', key: 'L', icon: 'select' },
+  { id: 'select', label: 'Select (lasso, shapes)', key: 'L', icon: 'select' },
+  { id: 'cutout', label: 'AI Cutout — click a person', key: 'W', icon: 'wand' },
   { id: 'brush', label: 'Brush', key: 'B', icon: 'brush' },
   { id: 'eraser', label: 'Eraser', key: 'E', icon: 'eraser' },
   { id: 'swirl', label: 'Magic swirl', key: 'S', icon: 'swirl' },
@@ -40,6 +43,15 @@ const TOOLS: { id: Tool; label: string; key: string; icon: string }[] = [
 function isTyping(e: KeyboardEvent) {
   const t = e.target as HTMLElement;
   return t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable);
+}
+
+function setTool(t: Tool) {
+  const was = store.state.tool;
+  store.set({ tool: t });
+  if (t === 'cutout' && was !== 'cutout') cutoutToolActivated();
+  if (was === 'cutout' && t !== 'cutout' && cutoutSessionLayerId() && store.state.cutout.hasResult) {
+    store.toast('Cutout not applied yet — switch back to the Cutout tool (W) to finish it');
+  }
 }
 
 function Menu({ label, items }: { label: string; items: ({ label: string; hint?: string; run: () => void; disabled?: boolean } | '-')[] }) {
@@ -153,12 +165,13 @@ export default function App() {
       const ctrl = e.ctrlKey || e.metaKey;
       const k = e.key.toLowerCase();
       const st = store.state;
+      const inCutout = st.tool === 'cutout' && !!cutoutSessionLayerId();
       if (ctrl && k === 'z' && !e.shiftKey) {
         e.preventDefault();
-        store.undo();
+        if (!(inCutout && cutoutUndo(false))) store.undo();
       } else if (ctrl && ((k === 'z' && e.shiftKey) || k === 'y')) {
         e.preventDefault();
-        store.redo();
+        if (!(inCutout && cutoutUndo(true))) store.redo();
       } else if (ctrl && k === 's') {
         e.preventDefault();
         saveProject();
@@ -202,6 +215,7 @@ export default function App() {
         return;
       } else if (k === 'v') store.set({ tool: 'move' });
       else if (k === 'l' || k === 'm') store.set({ tool: 'select' });
+      else if (k === 'w') setTool('cutout');
       else if (k === 's') store.set({ tool: 'swirl' });
       else if (k === 'f') store.set({ tool: 'fire' });
       else if (k === 'b') store.set({ tool: 'brush' });
@@ -210,6 +224,8 @@ export default function App() {
       else if (k === 'h') store.set({ tool: 'hand' });
       else if (k === 'x') store.set({ maskPaint: st.maskPaint === 'hide' ? 'reveal' : 'hide' });
       else if (k === '\\') store.set({ showMask: !st.showMask });
+      else if (k === '[' && st.tool === 'cutout') store.set({ cutout: { ...st.cutout, brush: Math.max(2, Math.round(st.cutout.brush * 0.85)) } });
+      else if (k === ']' && st.tool === 'cutout') store.set({ cutout: { ...st.cutout, brush: Math.min(1000, Math.round(st.cutout.brush * 1.18) + 1) } });
       else if (k === '[') store.set({ brush: { ...st.brush, size: Math.max(1, Math.round(st.brush.size * 0.85)) } });
       else if (k === ']') store.set({ brush: { ...st.brush, size: Math.min(2000, Math.round(st.brush.size * 1.18) + 1) } });
       else if (k === 'delete' || k === 'backspace') {
@@ -236,6 +252,8 @@ export default function App() {
   }, []);
 
   const setBrush = (patch: Partial<typeof brush>) => store.set({ brush: { ...store.state.brush, ...patch } });
+  const cut = useStore((s) => s.cutout);
+  const setCut = (patch: Partial<typeof cut>) => store.set({ cutout: { ...store.state.cutout, ...patch } });
 
   return (
     <div className="app">
@@ -475,6 +493,38 @@ export default function App() {
             </div>
           </>
         )}
+        {tool === 'cutout' && (
+          <>
+            <Segmented
+              label="Cutout tool"
+              value={cut.mode}
+              onChange={(v) => setCut({ mode: v })}
+              options={[
+                { value: 'pick', label: 'Pick', title: 'Click a person or drag a box · Shift+click adds · Alt+click excludes' },
+                { value: 'add', label: '+ Add', title: 'Paint to keep more' },
+                { value: 'remove', label: '− Remove', title: 'Paint to cut away' },
+                { value: 'refine', label: 'Refine edge', title: 'Paint over hair or fuzzy edges to re-solve them' },
+              ]}
+            />
+            {cut.mode !== 'pick' && (
+              <div className="opt-slider">
+                <Slider label="Size" value={cut.brush} min={2} max={1000} unit="px" onChange={(v) => setCut({ brush: v })} />
+              </div>
+            )}
+            <Segmented
+              label="View"
+              value={cut.view}
+              onChange={(v) => setCut({ view: v })}
+              options={[
+                { value: 'overlay', label: 'Overlay', title: 'Red shows what will be cut away' },
+                { value: 'black', label: 'On black' },
+                { value: 'white', label: 'On white' },
+                { value: 'layers', label: 'On layers', title: 'See it in the poster' },
+              ]}
+            />
+            <span className="muted">{cut.mode === 'pick' ? 'Click a person · drag a box · Shift+click adds · Alt+click excludes' : '[ ] size · Ctrl+Z undoes a stroke'}</span>
+          </>
+        )}
         {tool === 'eyedropper' && <span className="muted">Click the image to pick a color for the brush (also copied to clipboard).</span>}
         {tool === 'hand' && <span className="muted">Drag to pan · scroll to zoom · Ctrl+0 fits the page</span>}
       </div>
@@ -489,7 +539,7 @@ export default function App() {
               aria-pressed={tool === t.id}
               aria-label={`${t.label} (${t.key})`}
               title={`${t.label} (${t.key})`}
-              onClick={() => store.set({ tool: t.id })}
+              onClick={() => setTool(t.id)}
             >
               <Icon name={t.icon} size={20} />
             </button>
@@ -500,6 +550,7 @@ export default function App() {
         </nav>
         <main className="stage">
           <Viewport />
+          {tool === 'cutout' && <CutoutPanel />}
         </main>
         <aside className="sidebar">
           <Properties />

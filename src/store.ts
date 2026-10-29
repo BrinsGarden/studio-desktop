@@ -2,8 +2,52 @@ import { useSyncExternalStore } from 'react';
 import type { Doc, Layer } from './engine/types';
 import { applyPatch, type PixelPatch } from './engine/brush';
 import type { SelectMode, Selection } from './engine/selection';
+import type { Quality, PickPoint } from './engine/aiProtocol';
+import { DEFAULT_EDGES, type EdgeSettings } from './engine/cutoutPipeline';
 
-export type Tool = 'move' | 'select' | 'brush' | 'eraser' | 'swirl' | 'fire' | 'eyedropper' | 'hand';
+export type Tool = 'move' | 'select' | 'cutout' | 'brush' | 'eraser' | 'swirl' | 'fire' | 'eyedropper' | 'hand';
+
+export type CutoutMode = 'pick' | 'add' | 'remove' | 'refine';
+export type CutoutView = 'overlay' | 'black' | 'white' | 'layers';
+
+/** UI state for the Cutout tool (heavy pixel data lives in cutout.ts). */
+export interface CutoutState {
+  /** Layer being cut out, or null when no cutout is in progress. */
+  layerId: string | null;
+  status: 'idle' | 'working' | 'ready' | 'error';
+  message: string;
+  progress: number | null;
+  mode: CutoutMode;
+  view: CutoutView;
+  quality: Quality;
+  edges: EdgeSettings;
+  /** Brush diameter in document pixels for Add / Remove / Refine. */
+  brush: number;
+  decontam: boolean;
+  decontamAmount: number;
+  /** True once there is something to apply (AI result or brush edits). */
+  hasResult: boolean;
+  /** Clicked points in layer pixels, for on-canvas markers. */
+  points: PickPoint[];
+  device: 'webgpu' | 'wasm' | null;
+}
+
+export const DEFAULT_CUTOUT: CutoutState = {
+  layerId: null,
+  status: 'idle',
+  message: '',
+  progress: null,
+  mode: 'pick',
+  view: 'overlay',
+  quality: 'best',
+  edges: { ...DEFAULT_EDGES },
+  brush: 60,
+  decontam: true,
+  decontamAmount: 100,
+  hasResult: false,
+  points: [],
+  device: null,
+};
 
 export interface FireDefaults {
   preset: string;
@@ -47,6 +91,7 @@ export interface AppState {
   swirlRedrawId: string | null;
   previewHQ: boolean;
   showMask: boolean;
+  cutout: CutoutState;
   rev: number;
   dirty: boolean;
   canUndo: boolean;
@@ -97,6 +142,7 @@ class Store {
     fire: { preset: 'hell', height: 420, width: 70, wild: 45 },
     previewHQ: false,
     showMask: false,
+    cutout: { ...DEFAULT_CUTOUT, edges: { ...DEFAULT_EDGES } },
     rev: 0,
     dirty: false,
     canUndo: false,

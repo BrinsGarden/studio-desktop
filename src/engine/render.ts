@@ -323,11 +323,17 @@ export function dropCaches(layerId: string) {
 }
 
 /* ---------------- main render ---------------- */
+/** Temporary masks shown while the Cutout tool is open (never exported). Keyed by layer id. */
+export const previewMasks = new Map<string, HTMLCanvasElement>();
+let usePreview = false;
+
 export interface RenderOptions {
   /** Draw the doc background color (otherwise transparent). */
   background?: boolean;
   /** Show only this layer's mask as grayscale. */
   showMaskOf?: string | null;
+  /** Apply Cutout-tool preview masks (viewport only). */
+  preview?: boolean;
 }
 
 /** Composite the whole document into `out` at scale k (out must be docW*k x docH*k). */
@@ -344,15 +350,18 @@ export function renderDoc(doc: Doc, out: HTMLCanvasElement, k: number, opts: Ren
     ctx.fillRect(0, 0, W, H);
   }
 
+  usePreview = !!opts.preview;
   if (opts.showMaskOf) {
     const l = doc.layers.find((x) => x.id === opts.showMaskOf);
-    if (l && l.mask) {
+    const pm = usePreview ? previewMasks.get(opts.showMaskOf) : undefined;
+    if (l && (l.mask || pm)) {
       const { w, h } = sourceSize(l, doc);
       ctx.fillStyle = '#000';
       ctx.fillRect(0, 0, W, H);
       const m = layerMatrix(l, w, h);
       ctx.setTransform(new DOMMatrix().scale(k, k).multiply(m));
-      ctx.drawImage(l.mask, 0, 0, w, h);
+      ctx.drawImage((pm ?? l.mask)!, 0, 0, w, h);
+      usePreview = false;
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       return;
     }
@@ -363,6 +372,7 @@ export function renderDoc(doc: Doc, out: HTMLCanvasElement, k: number, opts: Ren
     if (layer.kind === 'adjust') drawAdjustLayer(doc, layer, ctx, W, H, k);
     else drawPixelLayer(doc, layer, ctx, W, H, k);
   }
+  usePreview = false;
   ctx.globalAlpha = 1;
   ctx.globalCompositeOperation = 'source-over';
 }
@@ -421,6 +431,12 @@ function drawPixelLayer(doc: Doc, layer: Layer, ctx: CanvasRenderingContext2D, W
   if (layer.mask && layer.maskEnabled) {
     L.globalCompositeOperation = 'destination-in';
     L.drawImage(layer.mask, 0, 0, w, h);
+    L.globalCompositeOperation = 'source-over';
+  }
+  const pm = usePreview ? previewMasks.get(layer.id) : undefined;
+  if (pm) {
+    L.globalCompositeOperation = 'destination-in';
+    L.drawImage(pm, 0, 0, w, h);
     L.globalCompositeOperation = 'source-over';
   }
   L.setTransform(1, 0, 0, 1, 0, 0);

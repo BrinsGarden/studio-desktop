@@ -24,6 +24,7 @@ const paths: Record<string, string> = {
   flipH: 'M12 3v18M8 7L3 12l5 5zM16 7l5 5-5 5z',
   flipV: 'M3 12h18M7 8l5-5 5 5zM7 16l5 5 5-5z',
   swap: 'M7 7h13l-3-3M17 17H4l3 3',
+  wand: 'M4 20L15 9M13.5 7.5l3 3M18 2v3M16.5 3.5h3M21 7v2M20 8h2M11 3v2M10 4h2',
 };
 
 export function Icon({ name, size = 18 }: { name: keyof typeof paths | string; size?: number }) {
