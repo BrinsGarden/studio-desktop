@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { store, useStore } from '../store';
-import { cutoutApply, cutoutCancel, cutoutSubject, setCutoutEdges } from '../cutout';
+import { cutoutApply, cutoutCancel, cutoutSubject, cutoutTooBig, setCutoutEdges } from '../cutout';
 import { Slider } from './ui';
 import { Icon } from './icons';
 
@@ -62,7 +62,7 @@ export default function CutoutPanel() {
           <span>Quality</span>
           <select value={cut.quality} disabled={working} onChange={(e) => set({ quality: e.target.value as typeof cut.quality })}>
             <option value="fast">Fast (smaller download)</option>
-            <option value="best">Best</option>
+            <option value="best">{cutoutTooBig('best') ? 'Best (too big for this computer)' : 'Best'}</option>
             <option value="max">Max — people (0.5–1 GB, GPU only)</option>
           </select>
         </label>

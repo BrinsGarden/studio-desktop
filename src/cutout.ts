@@ -6,7 +6,7 @@ import { store, DEFAULT_CUTOUT, type CutoutState } from './store';
 import { createCanvas, newId, type Layer } from './engine/types';
 import { dropCaches, previewMasks } from './engine/render';
 import { Stroke, applyPatch, type PixelPatch } from './engine/brush';
-import { GPU_FAIL, type FromWorker, type PickPoint, type ToWorker } from './engine/aiProtocol';
+import { GPU_FAIL, TOO_BIG, type FromWorker, type Quality, type PickPoint, type ToWorker } from './engine/aiProtocol';
 import type { Rect } from './engine/matte';
 
 type DistOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
@@ -53,6 +53,20 @@ function loadCpuOnly(): string[] {
   }
 }
 let cpuOnly: string[] = loadCpuOnly();
+
+/** Quality levels that ran out of memory on this computer. */
+const BIG_KEY = 'sd-cutout-too-big';
+let tooBig: string[] = (() => {
+  try {
+    return JSON.parse(localStorage.getItem(BIG_KEY) ?? '[]');
+  } catch {
+    return [];
+  }
+})();
+
+export function cutoutTooBig(q: Quality): boolean {
+  return tooBig.includes(q);
+}
 let seq = 0;
 const pending = new Map<number, Pending>();
 let sess: Session | null = null;
@@ -92,6 +106,11 @@ function handleGpuFail(message: string) {
       /* private mode — fine, it only lasts this visit */
     }
   }
+  restartWorker();
+}
+
+/** The AI runtime can't recover from a failed run, so start a fresh worker and re-send the photo. */
+function restartWorker() {
   worker?.terminate();
   worker = null;
   pending.forEach((p) => p.reject(new Error('restarted')));
@@ -234,6 +253,7 @@ function endSession() {
 
 /** Called when the Cutout tool is chosen: load the object finder in the background. */
 export function cutoutToolActivated() {
+  if (cutoutTooBig(store.state.cutout.quality)) setCut({ quality: 'fast' });
   const layer = store.selected();
   if (!layer || layer.kind !== 'image' || !layer.canvas) return;
   if (sess && sess.layerId !== layer.id) return;
@@ -248,7 +268,7 @@ export function cutoutToolActivated() {
 
 /* ---------------- AI picks ---------------- */
 
-async function runPick(msg: Req, retried = false) {
+async function runPick(msg: Req, retried = false, downgraded = false) {
   const s = sess;
   if (!s) return;
   setCut({ status: 'working', message: 'Getting ready…', progress: null });
@@ -263,7 +283,21 @@ async function runPick(msg: Req, retried = false) {
     if (message.startsWith(GPU_FAIL) && !retried) {
       setCut({ status: 'working', message: "Your graphics card can't run this model — switching to the CPU (slower)…", progress: null, device: 'wasm' });
       handleGpuFail(message);
-      return runPick(msg, true);
+      return runPick(msg, true, downgraded);
+    }
+    if (message.startsWith(TOO_BIG) && !downgraded && (msg.type === 'pick' || msg.type === 'subject') && msg.quality !== 'fast') {
+      const q = msg.quality;
+      if (!tooBig.includes(q)) {
+        tooBig = [...tooBig, q];
+        try {
+          localStorage.setItem(BIG_KEY, JSON.stringify(tooBig));
+        } catch {
+          /* fine */
+        }
+      }
+      setCut({ status: 'working', message: `${q === 'max' ? 'Max' : 'Best'} quality is too big for this computer — using Fast instead…`, progress: null, quality: 'fast' });
+      restartWorker();
+      return runPick({ ...msg, quality: 'fast' }, retried, true);
     }
     setCut({ status: 'error', message: message.startsWith(GPU_FAIL) ? "The AI model couldn't run on this computer." : message, progress: null });
   }

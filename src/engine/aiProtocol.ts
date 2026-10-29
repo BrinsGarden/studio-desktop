@@ -5,6 +5,8 @@ export type Quality = 'fast' | 'best' | 'max';
 
 /** Error prefix meaning "this model can't run on this graphics card": the page restarts the worker on CPU. */
 export const GPU_FAIL = 'GPU_FAIL:';
+/** Error prefix meaning "this model needs more memory than this computer's browser can give it". */
+export const TOO_BIG = 'TOO_BIG:';
 
 export interface PickPoint {
   x: number;

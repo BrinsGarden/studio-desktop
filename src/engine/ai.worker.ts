@@ -5,7 +5,7 @@
  * and are cached by the browser.
  */
 import { AutoModel, AutoProcessor, RawImage, SamModel, Tensor, env } from '@huggingface/transformers';
-import { GPU_FAIL, type FromWorker, type PickPoint, type Quality, type ToWorker } from './aiProtocol';
+import { GPU_FAIL, TOO_BIG, type FromWorker, type PickPoint, type Quality, type ToWorker } from './aiProtocol';
 import { adjustEdges, refineMatte, upsampleMatte, type EdgeSettings } from './cutoutPipeline';
 import {
   boxBlur,
@@ -322,6 +322,8 @@ async function matteRect(id: number, q: Quality, roi: Rect): Promise<{ coarse: F
       }
     } else if (onGpu) {
       throw gpuFail(err);
+    } else if (/bad_alloc|memory|allocation|OOM/i.test(String(err))) {
+      throw new Error(`${TOO_BIG}${q}`);
     } else throw err;
   }
   lastMatte = { key, roi, ...res };
@@ -542,7 +544,7 @@ scope.onmessage = (e) => {
 };
 
 function friendly(msg: string): string {
-  if (msg.startsWith(GPU_FAIL)) return msg;
+  if (msg.startsWith(GPU_FAIL) || msg.startsWith(TOO_BIG)) return msg;
   if (/fetch|network|Failed to load|404|ERR_/i.test(msg)) return `Couldn't download the AI model. Check your internet connection and try again. (${msg.slice(0, 120)})`;
   if (/memory|allocation|OOM/i.test(msg)) return 'Ran out of memory. Try Fast quality, or drag a box around just the person.';
   return msg;
