@@ -60,7 +60,7 @@ kbd {
 /* ---------- layout ---------- */
 .app {
   display: grid;
-  grid-template-rows: 44px 44px 1fr;
+  grid-template-rows: 44px 44px minmax(0, 1fr);
   grid-template-columns: minmax(0, 1fr);
   height: 100%;
   overflow: hidden;
@@ -70,6 +70,7 @@ kbd {
 }
 .workspace {
   display: grid;
+  grid-template-rows: minmax(0, 1fr);
   grid-template-columns: 52px minmax(0, 1fr) 340px;
   min-height: 0;
   min-width: 0;
@@ -227,6 +228,23 @@ kbd {
   padding: 8px 0;
   background: var(--panel);
   border-right: 1px solid var(--line);
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: none;
+}
+.toolbar > * {
+  flex-shrink: 0;
+}
+@media (max-height: 760px) {
+  .toolbar {
+    gap: 1px;
+    padding: 4px 0;
+  }
+  .toolbar .tool {
+    width: 36px;
+    height: 34px;
+  }
 }
 .tool {
   width: 40px;
